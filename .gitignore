@@ -218,3 +218,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local copy of the BTS data (large; the dataset is on Hugging Face)
+data/
