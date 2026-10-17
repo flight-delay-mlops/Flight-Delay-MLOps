@@ -1,0 +1,35 @@
+# MLflow tracking server + model registry (runs on VM1, http://10.17.0.167:5000).
+#
+# Needs a .env file next to this one (never commit it) with:
+#   MLFLOW_FLASK_SERVER_SECRET_KEY=<random string>
+#   MLFLOW_AUTH_ADMIN_PASSWORD=<at least 12 characters, only used on the first start>
+#
+# Start or update with: docker compose up -d --build
+services:
+  mlflow:
+    build: .
+    container_name: mlflow
+    restart: unless-stopped  # also starts it again after a VM reboot
+    ports:
+      - "5000:5000"
+    env_file: .env
+    # Everything is kept in /mlflow (the mlflow-data volume): the runs database,
+    # the users database (basic_auth.db) and the artifacts (models, plots, ...)
+    working_dir: /mlflow
+    volumes:
+      - mlflow-data:/mlflow
+    # --artifacts-destination makes the server proxy artifact uploads/downloads,
+    # so clients only need HTTP access, not access to the VM's disk.
+    # --app-name basic-auth asks for a username and password on every request.
+    # --cors-allowed-origins: by default MLflow blocks writes from any web page
+    # not on localhost, which includes its own UI when opened at the VM's IP.
+    command: >
+      mlflow server
+      --host 0.0.0.0 --port 5000
+      --backend-store-uri sqlite:///mlflow.db
+      --artifacts-destination /mlflow/artifacts
+      --app-name basic-auth
+      --cors-allowed-origins http://10.17.0.167:5000
+
+volumes:
+  mlflow-data:
