@@ -21,7 +21,7 @@ MLFLOW_TRACKING_USERNAME=...
 MLFLOW_TRACKING_PASSWORD=...
 ```
 
-The server is defined in `mlflow/`. Runs, users and artifacts live in the Docker volume `mlflow_mlflow-data`, so they survive restarts. To update it, copy `mlflow/` to `~/mlflow` on VM1 and run `docker compose up -d --build` there.
+The server is defined in `infra/mlflow/`. Runs, users and artifacts live in the Docker volume `mlflow_mlflow-data`, so they survive restarts. To update it, copy `infra/mlflow/` to `~/mlflow` on VM1 and run `docker compose up -d --build` there.
 
 ## DVC
 
