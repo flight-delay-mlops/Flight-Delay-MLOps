@@ -1,0 +1,5 @@
+[core]
+    autostage = true
+    remote = vm1
+['remote "vm1"']
+    url = ssh://admin@10.17.0.167/home/admin/dvc-store
