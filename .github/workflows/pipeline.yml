@@ -62,7 +62,9 @@ jobs:
           dvc cache dir --local "$HOME/.cache/dvc/${{ github.event.repository.name }}"
 
       - name: Pull data
-        run: dvc pull
+        # Outputs missing from the remote (e.g. someone forgot `dvc push`) are not an
+        # error: dvc repro rebuilds them below and dvc push uploads them
+        run: dvc pull --allow-missing
 
       - name: Run pipeline
         run: dvc repro
