@@ -80,7 +80,9 @@ def test_main_writes_train_and_val_parquet(tmp_path, params_path):
     raw_dir.mkdir()
     # Real raw files have many more columns, e.g. the actual arrival time: they must be ignored
     flights = make_flights(ARR_TIME=[905, 1230, 1945])
-    flights.to_csv(raw_dir / "2023_01.csv.gz", index=False)
+    # One file per month, as in data/raw; June has no validation flights at all
+    flights.iloc[:1].to_csv(raw_dir / "2023_06.csv.gz", index=False)
+    flights.iloc[1:].to_csv(raw_dir / "2023_07.csv.gz", index=False)
     out_dir = tmp_path / "prepared"
 
     main(raw_dir=raw_dir, out_dir=out_dir, params_path=params_path)

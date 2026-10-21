@@ -3,6 +3,8 @@ import glob
 import os
 
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 import yaml
 
 # Columns known before the scheduled departure, the only ones the model may use
@@ -19,15 +21,18 @@ LABELS = ["on_time", "moderate_delay", "severe_delay"]
 OUTCOMES = ["CANCELLED", "DIVERTED", "ARR_DELAY"]
 
 
-def load_raw(raw_dir):
+def raw_files(raw_dir):
     files = sorted(glob.glob(os.path.join(raw_dir, "*.csv.gz")))
     if not files:
         raise FileNotFoundError(f"no .csv.gz files in {raw_dir}")
-    # Reading only the columns we use keeps memory low enough for the 4 GB runner VM
-    return pd.concat(
-        [pd.read_csv(f, engine="pyarrow", usecols=FEATURES + OUTCOMES) for f in files],
-        ignore_index=True,
-    )
+    return files
+
+
+def read_raw(path):
+    # Only the columns we use, with text kept in compact Arrow form instead of one
+    # Python object per value: both keep memory low enough for the 4 GB runner VM
+    return pd.read_csv(path, engine="pyarrow", usecols=FEATURES + OUTCOMES,
+                       dtype_backend="pyarrow")
 
 
 def filter_flights(df):
@@ -51,22 +56,39 @@ def split_by_date(df, val_start):
     return df[~is_val], df[is_val]
 
 
-def prepare(df, val_start):
+def clean(df):
     df = filter_flights(df)
-    df = df.assign(label=label_delays(df.ARR_DELAY))[FEATURES + ["label"]]
-    return split_by_date(df, val_start)
+    return df.assign(label=label_delays(df.ARR_DELAY))[FEATURES + ["label"]]
+
+
+def prepare(df, val_start):
+    return split_by_date(clean(df), val_start)
 
 
 def main(raw_dir="data/raw", out_dir="data/prepared", params_path="params.yaml"):
     with open(params_path) as f:
         params = yaml.safe_load(f)["prepare"]
 
-    train, val = prepare(load_raw(raw_dir), params["val_start"])
-
     os.makedirs(out_dir, exist_ok=True)
-    train.to_parquet(os.path.join(out_dir, "train.parquet"), index=False)
-    val.to_parquet(os.path.join(out_dir, "val.parquet"), index=False)
-    print(f"train: {len(train):,} flights, val: {len(val):,} flights")
+    writers = {}
+    counts = {"train": 0, "val": 0}
+    try:
+        # One monthly file at a time, appended to the outputs: memory stays at about
+        # one month of data however many files there are (the runner VM has 4 GB)
+        for path in raw_files(raw_dir):
+            train, val = prepare(read_raw(path), params["val_start"])
+            for name, part in (("train", train), ("val", val)):
+                table = pa.Table.from_pandas(part, preserve_index=False)
+                if name not in writers:
+                    out_path = os.path.join(out_dir, f"{name}.parquet")
+                    writers[name] = pq.ParquetWriter(out_path, table.schema)
+                writers[name].write_table(table.cast(writers[name].schema))
+                counts[name] += len(part)
+    finally:
+        for writer in writers.values():
+            writer.close()
+
+    print(f"train: {counts['train']:,} flights, val: {counts['val']:,} flights")
 
 
 if __name__ == "__main__":
