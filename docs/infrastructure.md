@@ -35,6 +35,28 @@ dvc push      # upload new data or pipeline outputs
 
 `dvc pull` connects to VM1 over SSH, so you need the VPN and SSH access (your key on VM1, or `dvc remote modify --local vm1 ask_password true`).
 
+### Adding new data
+
+For example, the data and labels released after each evaluation round. Data folders are in `.gitignore`, so `git add` on data does nothing. Use DVC, then commit the small `.dvc` file it creates:
+
+```bash
+dvc add data/rounds/round_1                          # hash the data, creates data/rounds/round_1.dvc
+git add data/rounds/round_1.dvc data/rounds/.gitignore
+git commit -m "Add round 1 data"
+dvc push                                             # upload the data to VM1
+```
+
+### After changing pipeline code or params.yaml
+
+```bash
+dvc repro                                            # re-runs the affected stages, updates dvc.lock
+git add dvc.lock <changed files>
+git commit -m "..."
+dvc push                                             # upload the new outputs
+```
+
+Always commit `dvc.lock` together with the change that produced it.
+
 ## Runners
 
 Self-hosted GitHub Actions runners pick up workflow jobs. GitHub's own runners can't reach the VMs.
