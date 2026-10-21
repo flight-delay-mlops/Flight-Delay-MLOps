@@ -15,12 +15,19 @@ FEATURES = [
 
 LABELS = ["on_time", "moderate_delay", "severe_delay"]
 
+# Outcome columns, used only to filter and label flights, never as features
+OUTCOMES = ["CANCELLED", "DIVERTED", "ARR_DELAY"]
+
 
 def load_raw(raw_dir):
     files = sorted(glob.glob(os.path.join(raw_dir, "*.csv.gz")))
     if not files:
         raise FileNotFoundError(f"no .csv.gz files in {raw_dir}")
-    return pd.concat([pd.read_csv(f, engine="pyarrow") for f in files], ignore_index=True)
+    # Reading only the columns we use keeps memory low enough for the 4 GB runner VM
+    return pd.concat(
+        [pd.read_csv(f, engine="pyarrow", usecols=FEATURES + OUTCOMES) for f in files],
+        ignore_index=True,
+    )
 
 
 def filter_flights(df):

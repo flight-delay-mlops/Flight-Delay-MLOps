@@ -7,6 +7,7 @@ Performance data from 2022–2023. The assignment is in
 
 - VMs, MLflow, DVC and runners: [docs/infrastructure.md](docs/infrastructure.md)
 - Branches, commits and pull requests: [CONTRIBUTING.md](CONTRIBUTING.md)
+- CI/CD workflows: [.github/workflows/README.md](.github/workflows/README.md)
 
 ## Repository structure
 
