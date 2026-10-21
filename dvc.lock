@@ -1,0 +1,24 @@
+schema: '2.0'
+stages:
+  prepare:
+    cmd: python src/prepare.py
+    deps:
+    - path: data/raw
+      hash: md5
+      md5: 45a8ef1f51810686209c5bd373d5f641.dir
+      size: 252879660
+      nfiles: 24
+    - path: src/prepare.py
+      hash: md5
+      md5: 7e37ed02e99b3664346d768deb55c2dd
+      size: 1439
+    params:
+      params.yaml:
+        prepare:
+          val_start: '2023-07-01'
+    outs:
+    - path: data/prepared
+      hash: md5
+      md5: 98a1985061a6eb7c764025f64b0daf34.dir
+      size: 122983057
+      nfiles: 2

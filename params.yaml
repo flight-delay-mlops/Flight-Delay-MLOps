@@ -1,0 +1,2 @@
+prepare:
+  val_start: "2023-07-01"  # flights from this date on go to validation
