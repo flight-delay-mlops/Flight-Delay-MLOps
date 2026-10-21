@@ -24,6 +24,8 @@ src/                Data and training pipeline code (run by DVC stages)
 tests/              Automated tests (pytest), run by CI
 dvc.yaml, dvc.lock  Pipeline definition and the exact versions it last ran with
 params.yaml         Pipeline settings, tracked by DVC
+pyproject.toml      Settings for pytest and ruff
+requirements*.txt   Runtime dependencies; -dev adds the test and lint tools
 ```
 
 Why it is split this way:
@@ -60,6 +62,14 @@ python -m venv .venv
 pip install -r requirements.txt
 dvc pull     # download data/raw and data/prepared from VM1
 dvc repro    # re-run any pipeline stage whose inputs changed
+```
+
+Before opening a PR, run the same checks as CI:
+
+```powershell
+pip install -r requirements-dev.txt
+ruff check .
+pytest
 ```
 
 To log to MLflow, copy `.env.template` to `.env` (git-ignored) and fill in your

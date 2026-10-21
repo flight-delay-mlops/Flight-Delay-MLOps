@@ -1,0 +1,12 @@
+# Tool settings only (the project is not installed as a package)
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]  # lets tests import `src.prepare` like the rest of the code will
+
+[tool.ruff]
+line-length = 100
+extend-exclude = ["venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]  # pycodestyle errors, pyflakes, import sorting
