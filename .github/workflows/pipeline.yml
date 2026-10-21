@@ -43,9 +43,19 @@ jobs:
           DVC_SSH_KEY: ${{ secrets.DVC_SSH_KEY }}
         run: |
           # Private key that can log in to VM1 as admin, only on disk during this job
+          if [ -z "$DVC_SSH_KEY" ]; then
+            echo "::error::Secret DVC_SSH_KEY is empty or missing (it must be a repository secret)"
+            exit 1
+          fi
           key="$RUNNER_TEMP/dvc_ssh_key"
-          printf '%s\n' "$DVC_SSH_KEY" > "$key"
+          # Drop Windows line endings, which break the key if it was copied from a Windows editor
+          printf '%s\n' "$DVC_SSH_KEY" | tr -d '\r' > "$key"
           chmod 600 "$key"
+          # Fails here, with a clear message, if the key is malformed or has a passphrase
+          if ! ssh-keygen -y -P "" -f "$key" > /dev/null; then
+            echo "::error::DVC_SSH_KEY is not a valid private key without a passphrase"
+            exit 1
+          fi
           dvc remote modify --local vm1 keyfile "$key"
           # Keep the DVC cache outside the checkout, which is wiped on every run,
           # so later runs only download what changed
