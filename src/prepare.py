@@ -13,27 +13,54 @@ FEATURES = [
     "CRS_ELAPSED_TIME", "DISTANCE",
 ]
 
-params = yaml.safe_load(open("params.yaml"))["prepare"]
+LABELS = ["on_time", "moderate_delay", "severe_delay"]
 
-files = sorted(glob.glob("data/raw/*.csv.gz"))
-df = pd.concat([pd.read_csv(f, engine="pyarrow") for f in files], ignore_index=True)
 
-# Keep only flights that arrived: not cancelled, not diverted, with an arrival delay
-df = df[(df.CANCELLED == 0) & (df.DIVERTED == 0) & df.ARR_DELAY.notna()]
+def load_raw(raw_dir):
+    files = sorted(glob.glob(os.path.join(raw_dir, "*.csv.gz")))
+    if not files:
+        raise FileNotFoundError(f"no .csv.gz files in {raw_dir}")
+    return pd.concat([pd.read_csv(f, engine="pyarrow") for f in files], ignore_index=True)
 
-# Label from the arrival delay: <15 min, 15-59 min, >=60 min
-df["label"] = pd.cut(
-    df.ARR_DELAY,
-    bins=[-float("inf"), 15, 60, float("inf")],
-    labels=["on_time", "moderate_delay", "severe_delay"],
-    right=False,
-)
 
-# Time-based split: train on older flights, validate on the most recent ones
-is_val = pd.to_datetime(df.FL_DATE) >= params["val_start"]
-df = df[FEATURES + ["label"]]
+def filter_flights(df):
+    # Keep only flights that arrived: not cancelled, not diverted, with an arrival delay
+    return df[(df.CANCELLED == 0) & (df.DIVERTED == 0) & df.ARR_DELAY.notna()]
 
-os.makedirs("data/prepared", exist_ok=True)
-df[~is_val].to_parquet("data/prepared/train.parquet", index=False)
-df[is_val].to_parquet("data/prepared/val.parquet", index=False)
-print(f"train: {(~is_val).sum():,} flights, val: {is_val.sum():,} flights")
+
+def label_delays(arr_delay):
+    # Label from the arrival delay: <15 min, 15-59 min, >=60 min
+    return pd.cut(
+        arr_delay,
+        bins=[-float("inf"), 15, 60, float("inf")],
+        labels=LABELS,
+        right=False,
+    )
+
+
+def split_by_date(df, val_start):
+    # Time-based split: train on older flights, validate on the most recent ones
+    is_val = pd.to_datetime(df.FL_DATE) >= val_start
+    return df[~is_val], df[is_val]
+
+
+def prepare(df, val_start):
+    df = filter_flights(df)
+    df = df.assign(label=label_delays(df.ARR_DELAY))[FEATURES + ["label"]]
+    return split_by_date(df, val_start)
+
+
+def main(raw_dir="data/raw", out_dir="data/prepared", params_path="params.yaml"):
+    with open(params_path) as f:
+        params = yaml.safe_load(f)["prepare"]
+
+    train, val = prepare(load_raw(raw_dir), params["val_start"])
+
+    os.makedirs(out_dir, exist_ok=True)
+    train.to_parquet(os.path.join(out_dir, "train.parquet"), index=False)
+    val.to_parquet(os.path.join(out_dir, "val.parquet"), index=False)
+    print(f"train: {len(train):,} flights, val: {len(val):,} flights")
+
+
+if __name__ == "__main__":
+    main()

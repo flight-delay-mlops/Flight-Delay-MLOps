@@ -1,0 +1,4 @@
+# Development and CI tools, on top of requirements.txt
+-r requirements.txt
+pytest==8.4.2
+ruff==0.13.0
