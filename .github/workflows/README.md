@@ -47,7 +47,11 @@ the results come from a clean, known environment instead of someone's laptop.
 2. **Configure DVC**: writes the SSH key from the `DVC_SSH_KEY` secret to a
    temporary file so DVC can log in to VM1, and points the DVC cache to a folder
    on the runner that survives between runs (so only new data is downloaded).
-3. **Pull data** (`dvc pull`): downloads the data the current `dvc.lock` points to.
+3. **Pull data** (`dvc pull --allow-missing`): downloads the data the current
+   `dvc.lock` points to. If some of it isn't on VM1 (e.g. someone committed a new
+   `dvc.lock` but forgot `dvc push`), it skips it instead of failing: the next
+   step rebuilds it. Missing *raw* data still fails, at the next step, since
+   nothing can rebuild it.
 4. **Run pipeline** (`dvc repro`): re-runs only the stages whose code, data or
    `params.yaml` changed. Today that is `prepare`; when `train.py` becomes a
    stage in `dvc.yaml`, this workflow trains the model without any change here.
