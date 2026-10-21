@@ -1,0 +1,85 @@
+name: Pipeline
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "dvc.yaml"
+      - "dvc.lock"
+      - "params.yaml"
+      - "data/*.dvc"
+      - "requirements.txt"
+      - ".github/workflows/pipeline.yml"
+  workflow_dispatch:
+
+# One run at a time, and never cancel one halfway through a dvc push
+concurrency:
+  group: pipeline
+  cancel-in-progress: false
+
+jobs:
+  pipeline:
+    # Needs our own runner: the DVC remote (and later MLflow) is only reachable inside DEI
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Configure DVC
+        env:
+          DVC_SSH_KEY: ${{ secrets.DVC_SSH_KEY }}
+        run: |
+          # Private key that can log in to VM1 as admin, only on disk during this job
+          key="$RUNNER_TEMP/dvc_ssh_key"
+          printf '%s\n' "$DVC_SSH_KEY" > "$key"
+          chmod 600 "$key"
+          dvc remote modify --local vm1 keyfile "$key"
+          # Keep the DVC cache outside the checkout, which is wiped on every run,
+          # so later runs only download what changed
+          dvc cache dir --local "$HOME/.cache/dvc/${{ github.event.repository.name }}"
+
+      - name: Pull data
+        run: dvc pull
+
+      - name: Run pipeline
+        run: dvc repro
+
+      - name: Push outputs
+        run: dvc push
+
+      - name: Report dvc.lock changes
+        run: |
+          {
+            echo "## dvc.lock"
+            if git diff --quiet dvc.lock; then
+              echo "No changes: every stage was already up to date."
+            else
+              echo "Stages re-ran. New dvc.lock (outputs pushed to the DVC remote):"
+              echo '```diff'
+              git diff dvc.lock
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Save dvc.lock
+        uses: actions/upload-artifact@v4
+        with:
+          name: dvc-lock
+          path: dvc.lock
+
+      - name: Remove SSH key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/dvc_ssh_key"

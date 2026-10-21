@@ -78,13 +78,18 @@ def params_path(tmp_path):
 def test_main_writes_train_and_val_parquet(tmp_path, params_path):
     raw_dir = tmp_path / "raw"
     raw_dir.mkdir()
-    make_flights().to_csv(raw_dir / "2023_01.csv.gz", index=False)
+    # Real raw files have many more columns, e.g. the actual arrival time: they must be ignored
+    flights = make_flights(ARR_TIME=[905, 1230, 1945])
+    flights.to_csv(raw_dir / "2023_01.csv.gz", index=False)
     out_dir = tmp_path / "prepared"
 
     main(raw_dir=raw_dir, out_dir=out_dir, params_path=params_path)
 
-    assert len(pd.read_parquet(out_dir / "train.parquet")) == 1
-    assert len(pd.read_parquet(out_dir / "val.parquet")) == 2
+    train = pd.read_parquet(out_dir / "train.parquet")
+    val = pd.read_parquet(out_dir / "val.parquet")
+    assert len(train) == 1
+    assert len(val) == 2
+    assert "ARR_TIME" not in train.columns
 
 
 def test_main_fails_clearly_without_raw_files(tmp_path, params_path):
