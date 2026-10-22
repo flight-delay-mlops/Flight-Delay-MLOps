@@ -32,15 +32,10 @@ stages:
       nfiles: 2
     - path: src/train.py
       hash: md5
-      md5: 5cf2dc35a95c5e91c4e3c3bf6c7a0362
-      size: 3171
+      md5: 3576d7545b9833d826428658015624c9
+      size: 3002
     params:
       params.yaml:
         train:
           strategy: most_frequent
           seed: 42
-    outs:
-    - path: metrics.json
-      hash: md5
-      md5: 69e799258f39c685fb154885112e3c3b
-      size: 159
