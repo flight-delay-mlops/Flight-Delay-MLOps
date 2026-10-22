@@ -81,6 +81,7 @@ Training is the `train` stage in `dvc.yaml` (`src/train.py`, settings under `tra
 
 - **Locally:** `dvc repro` with your `.env` filled in and the VPN on.
 - **Automatically:** a merge to `main` that changes the pipeline runs `pipeline.yml` on the runner. It pulls the data, runs `dvc repro` inside the training image (root `Dockerfile`: Python + `requirements.txt`) and pushes the outputs.
+- **By hand:** Actions → Pipeline → Run workflow, with **Retrain even if nothing changed** ticked to train even when DVC sees no changes.
 
 To run the same container yourself:
 

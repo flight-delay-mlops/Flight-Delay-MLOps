@@ -65,7 +65,8 @@ Other details:
 
 - It only starts on `main` when a file the pipeline depends on changed (`src/`,
   `dvc.yaml`, `params.yaml`, ...), so docs-only merges don't re-run it.
-- Use **Actions → Pipeline → Run workflow** to run it by hand on any branch.
+- Use **Actions → Pipeline → Run workflow** to run it by hand on any branch. Tick
+  **Retrain even if nothing changed** to force training (e.g. after a `Dockerfile` change).
 - Only one run at a time, and a run is never cancelled, so a `dvc push` is never
   cut off halfway.
 

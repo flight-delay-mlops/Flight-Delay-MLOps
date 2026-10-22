@@ -13,6 +13,12 @@ on:
       - "Dockerfile"
       - ".github/workflows/pipeline.yml"
   workflow_dispatch:
+    inputs:
+      force:
+        # DVC only retrains when the code, data or params change, not the Dockerfile or packages
+        description: "Retrain even if nothing changed"
+        type: boolean
+        default: false
 
 # One run at a time, and never cancel one halfway through a dvc push
 concurrency:
@@ -78,11 +84,13 @@ jobs:
           MLFLOW_TRACKING_URI: http://10.17.0.167:5000
           MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
           MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
+          FORCE: ${{ inputs.force }}
         run: |
+          if [ "$FORCE" = "true" ]; then cmd="dvc repro --force --single-item train"; else cmd="dvc repro"; fi
           docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -e USER=runner \
             -e MLFLOW_TRACKING_URI -e MLFLOW_TRACKING_USERNAME -e MLFLOW_TRACKING_PASSWORD \
             -v "$PWD:$PWD" -v "$HOME/.cache/dvc:$HOME/.cache/dvc" -w "$PWD" \
-            flight-delay-train dvc repro
+            flight-delay-train $cmd
 
       - name: Push outputs
         run: dvc push
