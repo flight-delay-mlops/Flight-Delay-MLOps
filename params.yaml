@@ -1,2 +1,5 @@
 prepare:
-  val_start: "2023-07-01"  # flights from this date on go to validation
+  val_start: '2023-07-01'  # flights from this date on go to validation
+train:
+  strategy: most_frequent  # baseline: "most_frequent" (always on_time) or "stratified" (random)
+  seed: 42                 # makes the random baseline reproducible

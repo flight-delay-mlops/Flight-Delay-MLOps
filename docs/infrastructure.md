@@ -21,6 +21,13 @@ MLFLOW_TRACKING_USERNAME=...
 MLFLOW_TRACKING_PASSWORD=...
 ```
 
+`src/train.py` reads them from `.env` (copy `.env.template`, it's git-ignored), so `dvc repro` logs to MLflow with your login. Each training run is logged to the `flight-delay` experiment and registered as a new version of the `flight-delay` model. Aliases point at versions:
+
+- `@staging`: the newest trained model, set automatically by `train.py`
+- `@production`: the model the API serves, moved by hand in the UI (Models → flight-delay) after comparing runs
+
+Load a model in Python with `mlflow.pyfunc.load_model("models:/flight-delay@production")`.
+
 The server is defined in `infra/mlflow/`. Runs, users and artifacts live in the Docker volume `mlflow_mlflow-data`, so they survive restarts. To update it, copy `infra/mlflow/` to `~/mlflow` on VM1 and run `docker compose up -d --build` there.
 
 ## DVC
@@ -56,6 +63,32 @@ dvc push                                             # upload the new outputs
 ```
 
 Always commit `dvc.lock` together with the change that produced it.
+
+### Trying different settings
+
+```bash
+dvc exp run -S train.strategy=stratified             # change a value in params.yaml and run the pipeline
+dvc exp show                                         # table of every run's params and metrics
+```
+
+`dvc exp run` leaves `params.yaml` with the value you set, so set it back (or commit it) afterwards. Every run is also in MLflow.
+
+The repo forces LF line endings (`.gitattributes`): DVC hashes files byte by byte, so Windows CRLF endings would make it re-run stages that didn't change.
+
+## Training
+
+Training is the `train` stage in `dvc.yaml` (`src/train.py`, settings under `train:` in `params.yaml`). It logs each run to MLflow and registers the model as `@staging`.
+
+- **Locally:** `dvc repro` with your `.env` filled in and the VPN on.
+- **Automatically:** a merge to `main` that changes the pipeline runs `pipeline.yml` on the runner. It pulls the data, runs `dvc repro` inside the training image (root `Dockerfile`: Python + `requirements.txt`) and pushes the outputs.
+- **By hand:** Actions → Pipeline → Run workflow, with **Retrain even if nothing changed** ticked to train even when DVC sees no changes.
+
+To run the same container yourself:
+
+```bash
+docker build -t flight-delay-train .
+docker run --rm --env-file .env -v "$PWD:$PWD" -w "$PWD" --user "$(id -u):$(id -g)" -e HOME=/tmp -e USER=$USER flight-delay-train dvc repro
+```
 
 ## Runners
 
