@@ -15,6 +15,3 @@ stages:
       - data/prepared
     params:
       - train
-    metrics:
-      - metrics.json:
-          cache: false

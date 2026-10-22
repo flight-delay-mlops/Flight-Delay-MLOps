@@ -69,10 +69,6 @@ def main():
     MlflowClient().set_registered_model_alias(MODEL_NAME, "staging",
                                               info.registered_model_version)
 
-    # Also kept by DVC, so `dvc metrics show` / `dvc metrics diff` work without MLflow
-    with open("metrics.json", "w") as f:
-        json.dump(metrics, f, indent=2)
-
 
 if __name__ == "__main__":
     main()
