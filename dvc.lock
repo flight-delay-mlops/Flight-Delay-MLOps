@@ -10,8 +10,8 @@ stages:
       nfiles: 24
     - path: src/prepare.py
       hash: md5
-      md5: a08a43946b9b47a28810e0fb556d5865
-      size: 3298
+      md5: 344a97cf969798380c9885982e6dab17
+      size: 3203
     params:
       params.yaml:
         prepare:
@@ -22,3 +22,25 @@ stages:
       md5: c473239607601231199f395bd8421eba.dir
       size: 125025830
       nfiles: 2
+  train:
+    cmd: python -m src.train
+    deps:
+    - path: data/prepared
+      hash: md5
+      md5: c473239607601231199f395bd8421eba.dir
+      size: 125025830
+      nfiles: 2
+    - path: src/train.py
+      hash: md5
+      md5: 5cf2dc35a95c5e91c4e3c3bf6c7a0362
+      size: 3171
+    params:
+      params.yaml:
+        train:
+          strategy: most_frequent
+          seed: 42
+    outs:
+    - path: metrics.json
+      hash: md5
+      md5: 69e799258f39c685fb154885112e3c3b
+      size: 159

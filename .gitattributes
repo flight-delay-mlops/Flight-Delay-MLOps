@@ -1,0 +1,2 @@
+# Same line endings on every OS, or DVC sees a different hash for the same file on Windows
+* text=auto eol=lf
