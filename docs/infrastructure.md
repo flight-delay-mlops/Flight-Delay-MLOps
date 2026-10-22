@@ -75,6 +75,21 @@ dvc exp show                                         # table of every run's para
 
 The repo forces LF line endings (`.gitattributes`): DVC hashes files byte by byte, so Windows CRLF endings would make it re-run stages that didn't change.
 
+## Training
+
+Training is the `train` stage in `dvc.yaml` (`src/train.py`, settings under `train:` in `params.yaml`). It logs each run to MLflow and registers the model as `@staging`.
+
+- **Locally:** `dvc repro` with your `.env` filled in and the VPN on.
+- **Automatically:** a merge to `main` that changes the pipeline runs `pipeline.yml` on the runner. It pulls the data, runs `dvc repro` inside the training image (root `Dockerfile`: Python + `requirements.txt`) and pushes the outputs.
+- **By hand:** Actions → Pipeline → Run workflow, with **Retrain even if nothing changed** ticked to train even when DVC sees no changes.
+
+To run the same container yourself:
+
+```bash
+docker build -t flight-delay-train .
+docker run --rm --env-file .env -v "$PWD:$PWD" -w "$PWD" --user "$(id -u):$(id -g)" -e HOME=/tmp -e USER=$USER flight-delay-train dvc repro
+```
+
 ## Runners
 
 Self-hosted GitHub Actions runners pick up workflow jobs. GitHub's own runners can't reach the VMs.
