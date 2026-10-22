@@ -52,9 +52,10 @@ the results come from a clean, known environment instead of someone's laptop.
    `dvc.lock` but forgot `dvc push`), it skips it instead of failing: the next
    step rebuilds it. Missing *raw* data still fails, at the next step, since
    nothing can rebuild it.
-4. **Run pipeline** (`dvc repro`): re-runs only the stages whose code, data or
-   `params.yaml` changed. Today that is `prepare`; when `train.py` becomes a
-   stage in `dvc.yaml`, this workflow trains the model without any change here.
+4. **Build image, run pipeline**: builds the training image from the root
+   `Dockerfile` and runs `dvc repro` inside it, which re-runs only the stages
+   whose code, data or `params.yaml` changed (`prepare`, `train`). Training logs
+   to MLflow with the `ci` user.
 5. **Push outputs** (`dvc push`): uploads the new outputs to VM1.
 6. **Report**: the run's summary page shows what changed in `dvc.lock`, and the
    new `dvc.lock` is saved as a downloadable artifact (`dvc-lock`).
@@ -81,6 +82,7 @@ each model in MLflow, so every model can be traced to its exact code and data.
 | Name | Kind | Value |
 |---|---|---|
 | `DVC_SSH_KEY` | Secret (Settings → Secrets and variables → Actions) | A private key whose public half is in `~admin/.ssh/authorized_keys` on VM1 |
+| `MLFLOW_TRACKING_USERNAME`, `MLFLOW_TRACKING_PASSWORD` | Secrets | Login of the `ci` MLflow user (created by an admin in the MLflow UI) |
 
 Create a key just for CI rather than reusing someone's personal one, so it can
 be revoked on its own:
