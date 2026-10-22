@@ -8,3 +8,13 @@ stages:
       - prepare
     outs:
       - data/prepared
+  train:
+    cmd: python -m src.train
+    deps:
+      - src/train.py
+      - data/prepared
+    params:
+      - train
+    metrics:
+      - metrics.json:
+          cache: false
