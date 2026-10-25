@@ -103,6 +103,22 @@ def test_request_rejects_a_malformed_instances_array(payload):
         ClassifyRequest.model_validate(payload)
 
 
+def test_to_dataframe_has_a_row_per_flight_in_order_and_a_column_per_field():
+    request = ClassifyRequest(instances=[{"ORIGIN": "AAA"}, {"ORIGIN": "BBB"}, {"ORIGIN": "CCC"}])
+
+    frame = request.to_dataframe()
+
+    assert list(frame.ORIGIN) == ["AAA", "BBB", "CCC"]
+    assert list(frame.columns) == list(Flight.model_fields)
+
+
+def test_to_dataframe_keeps_nulls_for_the_model_to_judge():
+    frame = ClassifyRequest(instances=[{**COMPLETE_ROW, "TAIL_NUM": None}]).to_dataframe()
+
+    assert frame.TAIL_NUM.isna().all()
+    assert frame.DISTANCE.iloc[0] == 528.0
+
+
 def test_request_error_names_the_instance_and_the_field():
     with pytest.raises(ValidationError) as error:
         ClassifyRequest.model_validate({"instances": [{}, {"DISTANCE": "far"}]})
