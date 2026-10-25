@@ -3,7 +3,7 @@ from datetime import date
 import pytest
 from pydantic import ValidationError
 
-from api.schemas import Flight
+from api.schemas import ClassifyRequest, ClassifyResponse, Flight
 
 COMPLETE_ROW = {
     "FL_DATE": "2023-07-02",
@@ -78,3 +78,45 @@ def test_values_are_converted_to_the_field_type(field, raw, expected):
 def test_invalid_values_are_rejected(field, raw):
     with pytest.raises(ValidationError):
         Flight(**{field: raw})
+
+
+def test_request_keeps_the_flights_in_order():
+    request = ClassifyRequest(instances=[{"ORIGIN": "DTW"}, COMPLETE_ROW, {"ORIGIN": "JFK"}])
+
+    assert [flight.ORIGIN for flight in request.instances] == ["DTW", "DTW", "JFK"]
+    assert all(isinstance(flight, Flight) for flight in request.instances)
+
+
+def test_request_treats_an_empty_object_as_a_flight_with_every_field_null():
+    request = ClassifyRequest(instances=[{}])
+
+    assert all(value is None for _, value in request.instances[0])
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [{}, {"instances": None}, {"instances": []}, {"instances": "DTW"}, {"instances": [5]}],
+    ids=["missing", "null", "empty", "not-a-list", "element-not-an-object"],
+)
+def test_request_rejects_a_malformed_instances_array(payload):
+    with pytest.raises(ValidationError):
+        ClassifyRequest.model_validate(payload)
+
+
+def test_request_error_names_the_instance_and_the_field():
+    with pytest.raises(ValidationError) as error:
+        ClassifyRequest.model_validate({"instances": [{}, {"DISTANCE": "far"}]})
+
+    assert error.value.errors()[0]["loc"] == ("instances", 1, "DISTANCE")
+
+
+def test_response_accepts_the_three_labels_in_order():
+    labels = ["moderate_delay", "on_time", "severe_delay"]
+
+    assert ClassifyResponse(classifications=labels).model_dump() == {"classifications": labels}
+
+
+@pytest.mark.parametrize("label", ["late", "ON_TIME", ""])
+def test_response_rejects_unknown_labels(label):
+    with pytest.raises(ValidationError):
+        ClassifyResponse(classifications=["on_time", label])
