@@ -1,4 +1,7 @@
-# Development and CI tools, on top of requirements.txt
+# Development and CI tools, on top of requirements.txt and the API requirements
 -r requirements.txt
+-r api/requirements.txt
 pytest==8.4.2
 ruff==0.13.0
+# FastAPI's TestClient in the API tests (Starlette deprecated httpx in favour of httpx2)
+httpx2==2.16.0
