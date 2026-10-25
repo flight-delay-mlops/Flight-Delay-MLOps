@@ -7,6 +7,10 @@ class ModelNotLoadedError(Exception):
     """Raised when a request needs the model and none is loaded."""
 
 
+class InputRejectedError(Exception):
+    """Raised when the model refuses the input it was given; the message says why."""
+
+
 def error_body(detail):
     """Body of every error response: change the format of all of them here."""
     return {"detail": detail}
@@ -19,6 +23,11 @@ async def handle_validation_error(request, error: RequestValidationError):
         for issue in error.errors()
     ]
     return JSONResponse(status_code=422, content=error_body(issues))
+
+
+async def handle_input_rejected(request, error: InputRejectedError):
+    """Answer 422 with the reason the model gave."""
+    return JSONResponse(status_code=422, content=error_body(str(error)))
 
 
 async def handle_model_not_loaded(request, error: ModelNotLoadedError):
