@@ -5,6 +5,9 @@ from contextlib import asynccontextmanager
 
 import mlflow.pyfunc
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
+
+from api.errors import handle_validation_error
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +29,7 @@ async def lifespan(app):
 
 
 app = FastAPI(title="Flight delay inference API", lifespan=lifespan)
+app.add_exception_handler(RequestValidationError, handle_validation_error)
 app.state.model = None
 
 
