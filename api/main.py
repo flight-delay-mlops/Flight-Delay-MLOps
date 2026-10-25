@@ -1,9 +1,12 @@
 """Inference API: classifies flights by arrival delay severity."""
+import logging
 import os
 from contextlib import asynccontextmanager
 
 import mlflow.pyfunc
 from fastapi import FastAPI
+
+logger = logging.getLogger(__name__)
 
 MODEL_URI = os.getenv("MODEL_URI", "models:/flight-delay@production")
 
@@ -14,7 +17,11 @@ def load_model():
 
 @asynccontextmanager
 async def lifespan(app):
-    app.state.model = load_model()
+    try:
+        app.state.model = load_model()
+    except Exception:
+        app.state.model = None
+        logger.exception("Could not load the model from %s", MODEL_URI)
     yield
 
 
