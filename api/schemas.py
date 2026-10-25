@@ -1,7 +1,8 @@
 """Request and response shapes of the inference API."""
 from datetime import date
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Flight(BaseModel):
@@ -28,3 +29,18 @@ class Flight(BaseModel):
     ARR_TIME_BLK: str | None = None
     CRS_ELAPSED_TIME: float | None = None
     DISTANCE: float | None = None
+
+
+class ClassifyRequest(BaseModel):
+    """Body of POST /classify: the flights to classify."""
+
+    instances: list[Flight] = Field(min_length=1)
+
+
+Label = Literal["on_time", "moderate_delay", "severe_delay"]
+
+
+class ClassifyResponse(BaseModel):
+    """Answer of POST /classify: one label per flight, in the order received."""
+
+    classifications: list[Label]
