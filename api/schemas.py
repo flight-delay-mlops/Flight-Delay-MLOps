@@ -2,6 +2,7 @@
 from datetime import date
 from typing import Literal
 
+import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -35,6 +36,10 @@ class ClassifyRequest(BaseModel):
     """Body of POST /classify: the flights to classify."""
 
     instances: list[Flight] = Field(min_length=1)
+
+    def to_dataframe(self):
+        """One row per flight, in the order received, with one column per Flight field."""
+        return pd.DataFrame([flight.model_dump() for flight in self.instances])
 
 
 Label = Literal["on_time", "moderate_delay", "severe_delay"]
