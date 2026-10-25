@@ -1,0 +1,8 @@
+# Runtime dependencies of the inference API
+fastapi==0.162.0
+uvicorn==0.54.0
+pydantic==2.14.1
+# Same versions as requirements.txt: the training image saves the model and this one loads it
+pandas==2.3.3
+scikit-learn==1.7.2
+mlflow==3.17.1
