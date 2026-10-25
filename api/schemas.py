@@ -1,7 +1,7 @@
 """Request and response shapes of the inference API."""
 from datetime import date
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class Flight(BaseModel):
@@ -10,6 +10,9 @@ class Flight(BaseModel):
 
     Also accepts null and missing key counts as null. (might have to fix later)
     """
+
+    # The centralized evaluation may send complete BTS rows, so unknown columns are not an error
+    model_config = ConfigDict(extra="ignore")
 
     FL_DATE: date | None = None
     OP_UNIQUE_CARRIER: str | None = None
