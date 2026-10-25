@@ -7,7 +7,12 @@ import mlflow.pyfunc
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 
-from api.errors import handle_validation_error
+from api.errors import (
+    ModelNotLoadedError,
+    handle_model_not_loaded,
+    handle_unexpected_error,
+    handle_validation_error,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +35,8 @@ async def lifespan(app):
 
 app = FastAPI(title="Flight delay inference API", lifespan=lifespan)
 app.add_exception_handler(RequestValidationError, handle_validation_error)
+app.add_exception_handler(ModelNotLoadedError, handle_model_not_loaded)
+app.add_exception_handler(Exception, handle_unexpected_error)
 app.state.model = None
 
 

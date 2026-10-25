@@ -3,6 +3,10 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 
+class ModelNotLoadedError(Exception):
+    """Raised when a request needs the model and none is loaded."""
+
+
 def error_body(detail):
     """Body of every error response: change the format of all of them here."""
     return {"detail": detail}
@@ -15,3 +19,14 @@ async def handle_validation_error(request, error: RequestValidationError):
         for issue in error.errors()
     ]
     return JSONResponse(status_code=422, content=error_body(issues))
+
+
+async def handle_model_not_loaded(request, error: ModelNotLoadedError):
+    """Answer 503: the service is up but cannot classify until a model is loaded."""
+    return JSONResponse(status_code=503, content=error_body("Model not loaded"))
+
+
+async def handle_unexpected_error(request, error: Exception):
+    """Answer 500 with a generic message, so no internal detail reaches the client."""
+    # Starlette re-raises after answering, so the server log still has the traceback
+    return JSONResponse(status_code=500, content=error_body("Internal server error"))
