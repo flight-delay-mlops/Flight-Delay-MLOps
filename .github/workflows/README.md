@@ -7,16 +7,20 @@ on GitHub and as checks on each pull request.
 
 | Workflow | Runs when | What it does |
 |---|---|---|
-| [ci.yml](ci.yml) | Every PR into `dev` or `main`, every push to them | Checks the code: lint + tests |
+| [ci.yml](ci.yml) | Every PR into `dev` or `main`, every push to them | Checks the code (lint + tests), then builds and smoke-tests the API image; on `main` also publishes it to GHCR |
 | [pipeline.yml](pipeline.yml) | A merge to `main` that changes the pipeline, or by hand | Runs the DVC pipeline and uploads its outputs |
 
 Both run on our **self-hosted runners** (`runs-on: [self-hosted, Linux, X64]`),
 not on GitHub's machines, because only machines inside DEI's network can reach
 the VMs. See [docs/infrastructure.md](../../docs/infrastructure.md) for the runners.
 
-## ci.yml: "is this code OK?"
+## ci.yml: "is this code OK, and does the API image work?"
 
 The safety net for every change. A PR should only be merged when this is green.
+It has two jobs; the second only starts if the first passed (`needs: test`), so
+code that fails its tests never gets an image.
+
+### Job 1, `test`
 
 1. **Checkout**: downloads the branch's code onto the runner.
 2. **Set up Python 3.11**: the same version we use locally.
@@ -27,8 +31,7 @@ The safety net for every change. A PR should only be merged when this is green.
 5. **Test** (`pytest -v`): runs everything in `tests/`, e.g. that delays are
    labelled correctly and that no outcome column leaks into the features.
 
-It is fast (no data, no VM access needed) and a new push to the same branch
-cancels the run still in progress, so there is never a queue of outdated checks.
+It is fast (no data, no VM access needed).
 
 Run the same checks locally before pushing:
 
@@ -37,6 +40,45 @@ pip install -r requirements-dev.txt
 ruff check .
 pytest
 ```
+
+### Job 2, `api-image`
+
+Packages the inference API as a Docker image ([api/Dockerfile](../../api/Dockerfile),
+explained in [api/README.md](../../api/README.md)) and checks that the image
+actually starts.
+
+1. **Build image**: `docker build -f api/Dockerfile -t flight-delay-api:ci .`, with
+   two labels: the repository (so GitHub links the published image to this repo)
+   and the commit it was built from. The runner keeps Docker's layer cache between
+   runs, so a rebuild takes seconds unless `api/requirements.txt` changed.
+2. **Smoke test**: starts the image with no MLflow access and checks, over HTTP, that:
+   - `/health` answers, reporting `"model_loaded": false`,
+   - a valid `/classify` request gets **503** (no model, but the app is up),
+   - an empty `instances` list gets **422** (input validation works).
+
+   This catches a broken image (missing package, wrong start command, app that
+   crashes on startup) before anything is published. It doesn't test predictions:
+   that needs a model from MLflow and is the job of the coming deploy/E2E step.
+3. **Push to GHCR** (only on pushes to `main` and manual runs, never on PRs):
+   tags the image `ghcr.io/<owner>/<repo>/api:<commit SHA>` and pushes it to
+   GitHub's container registry. The SHA tag never moves, so every published commit
+   can be deployed (or rolled back to) by its SHA. The image name is lowercased
+   because image names can't contain capitals. The run's summary shows the full name.
+4. **Clean up** (always, even after a failure): removes the smoke-test container
+   and the registry tag, logs out of GHCR and deletes dangling images. It keeps
+   `flight-delay-api:ci`, whose layers make the next build fast, so the runner's
+   disk doesn't fill up with one image per commit.
+
+Why it's built this way:
+
+- **Self-hosted runner**: the deploy step will run on the same VM, and the local
+  layer cache makes builds fast.
+- **Every PR builds the image** (no path filter): with the cache it costs seconds,
+  and it catches problems caused by files outside `api/` too (e.g. the workflow).
+- **Cancelling**: a new push to a PR cancels its run in progress, but runs on
+  `dev`/`main` are never cancelled, so every merged commit gets its image.
+- **Least privilege**: the workflow's token can only read the code; only the
+  `api-image` job gets `packages: write`, which it needs to push to GHCR.
 
 ## pipeline.yml: "rebuild the data and the model"
 
@@ -95,11 +137,21 @@ ssh-keygen -t ed25519 -f ci_dvc_key -N "" -C "github-actions dvc"
 Add `ci_dvc_key.pub` to VM1's `authorized_keys`, paste the contents of
 `ci_dvc_key` into the secret, then delete both files from your machine.
 
+Publishing the API image needs no secret (the run's own `GITHUB_TOKEN` is used),
+but GitHub must allow it:
+
+- **Settings → Actions → General → Workflow permissions**: either setting works,
+  since the job asks for `packages: write` itself. In an organization, an org
+  admin may also need to allow GitHub Actions to create packages
+  (Organization settings → Packages).
+- After the first push, the image appears under the repository's **Packages**.
+  It is private by default; the deployment VM will need to log in to pull it
+  (or make the package public in its **Package settings**).
+
 ## Coming next
 
 | Workflow | When | What |
 |---|---|---|
-| Training in `pipeline.yml` | When `train.py` exists | Logs to MLflow and registers the model (needs the MLflow credentials from the GitHub Environment) |
-| `build.yml` | When `api/Dockerfile` exists | Tests the API, builds the image, pushes it to GHCR |
-| `deploy.yml` | When the API works | Pulls the image on the deployment VM, restarts it, checks `/classify` |
+| `deploy.yml` | Next | Pulls the image on the deployment VM, restarts it, checks `/classify` with the real model |
+| E2E check + promotion | After deploy | Tests the new image with the `@staging` model, then moves `@production` if it isn't worse |
 | `monitor.yml` | December | Scheduled drift and performance checks, with alerts |
