@@ -7,18 +7,37 @@ on GitHub and as checks on each pull request.
 
 | Workflow | Runs when | What it does |
 |---|---|---|
-| [ci.yml](ci.yml) | Every PR into `dev` or `main`, every push to them | Checks the code (lint + tests), then builds and smoke-tests the API image; on `main` also publishes it to GHCR |
-| [pipeline.yml](pipeline.yml) | A merge to `main` that changes the pipeline, or by hand | Runs the DVC pipeline and uploads its outputs |
+| [ci.yml](ci.yml) | Every PR into `dev` or `main`, every push to them | Checks the code (lint + tests), then builds and smoke-tests the API image; on `main` also publishes it to GHCR and deploys it |
+| [train.yml](train.yml) | A merge to `main` that changes the pipeline, or by hand | Runs the DVC pipeline (prepare + train) and registers the new model in MLflow |
+| [deploy.yml](deploy.yml) | Called by `ci.yml` on `main`, or by hand | Runs an API image on VM2 with the `@production` model, checks it, rolls back if it fails |
 
-Both run on our **self-hosted runners** (`runs-on: [self-hosted, Linux, X64]`),
-not on GitHub's machines, because only machines inside DEI's network can reach
-the VMs. See [docs/infrastructure.md](../../docs/infrastructure.md) for the runners.
+All run on our **self-hosted runners**, not on GitHub's machines, because only
+machines inside DEI's network can reach the VMs. See
+[docs/infrastructure.md](../../docs/infrastructure.md) for the runners.
+
+### Naming: CI, CT and CD
+
+Each file is named after what it does, the usual convention (lowercase, one word):
+
+| File | Practice | Ends with |
+|---|---|---|
+| `ci.yml` | **Continuous Integration**: is this change OK to merge? | Tested code and an image that builds and starts |
+| `train.yml` | **Continuous Training**: rebuild the data and the model | A new model version in MLflow (`@staging`) |
+| `ci.yml` (on `main`) | **Continuous Delivery**: is a version *ready* to deploy? | An image in GHCR tagged with its commit SHA |
+| `deploy.yml` | **Continuous Deployment**: is the new version *running*? | The API live on VM2 |
+
+"CD" means both delivery (ready to ship) and deployment (actually shipped).
 
 ## ci.yml: "is this code OK, and does the API image work?"
 
 The safety net for every change. A PR should only be merged when this is green.
-It has two jobs; the second only starts if the first passed (`needs: test`), so
-code that fails its tests never gets an image.
+It has three jobs, each starting only if the one before passed (`needs:`), so
+code that fails its tests never gets an image, and an image that doesn't start
+is never deployed:
+
+```
+test ──▶ api-image ──▶ deploy (main only, runs deploy.yml)
+```
 
 ### Job 1, `test`
 
@@ -59,6 +78,13 @@ actually starts.
    This catches a broken image (missing package, wrong start command, app that
    crashes on startup) before anything is published. It doesn't test predictions:
    that needs a model from MLflow and is the job of the coming deploy/E2E step.
+
+   "No MLflow access" means pointing `MLFLOW_TRACKING_URI` at an address where nothing
+   answers, with `MLFLOW_HTTP_REQUEST_MAX_RETRIES=0`, so loading the model fails
+   within a second. Leaving the variable unset doesn't work: MLflow then tries to
+   create a local database (`mlflow.db`) in `/app`, which the container's user
+   can't write. It retries for about 100 s before giving up, and the app answers
+   nothing until then, so the test timed out after 60 s.
 3. **Push to GHCR** (only on pushes to `main` and manual runs, never on PRs):
    tags the image `ghcr.io/<owner>/<repo>/api:<commit SHA>` and pushes it to
    GitHub's container registry. The SHA tag never moves, so every published commit
@@ -80,7 +106,14 @@ Why it's built this way:
 - **Least privilege**: the workflow's token can only read the code; only the
   `api-image` job gets `packages: write`, which it needs to push to GHCR.
 
-## pipeline.yml: "rebuild the data and the model"
+### Job 3, `deploy`
+
+Only on pushes to `main`. It doesn't have steps of its own: it calls
+[deploy.yml](deploy.yml) (a *reusable workflow*) with this commit's SHA, so the
+image that was just tested and published is the one deployed. See
+[deploy.yml](#deployyml-is-the-new-version-running) below.
+
+## train.yml: "rebuild the data and the model"
 
 Runs `dvc repro`, the same command you would run locally, but on the runner, so
 the results come from a clean, known environment instead of someone's laptop.
@@ -107,7 +140,7 @@ Other details:
 
 - It only starts on `main` when a file the pipeline depends on changed (`src/`,
   `dvc.yaml`, `params.yaml`, ...), so docs-only merges don't re-run it.
-- Use **Actions → Pipeline → Run workflow** to run it by hand on any branch. Tick
+- Use **Actions → Train → Run workflow** to run it by hand on any branch. Tick
   **Retrain even if nothing changed** to force training (e.g. after a `Dockerfile` change).
 - Only one run at a time, and a run is never cancelled, so a `dvc push` is never
   cut off halfway.
@@ -119,6 +152,59 @@ a locally regenerated `dvc.lock`, which means training on our own laptops.
 We want the opposite: the pipeline runs here, on the runner. The `dvc.lock` it
 produces is recorded in the run summary and artifact, and will be logged with
 each model in MLflow, so every model can be traced to its exact code and data.
+
+## deploy.yml: "is the new version running?"
+
+Runs a published API image on VM2, as the container `flight-delay-api` on port 8000,
+serving the model that MLflow's `@production` alias points to. The endpoint is
+**http://10.17.0.156:8000/classify**.
+
+When it runs:
+
+- **After every merge into `main`**: `ci.yml` calls it once the image is published.
+- **By hand** (Actions → Deploy → Run workflow): leave the SHA empty to redeploy
+  the latest commit of the chosen branch, e.g. after moving `@production` in MLflow
+  (the API only loads the model at startup). Give an older commit's SHA to roll
+  back to that version.
+
+Steps:
+
+1. **Pull image** `ghcr.io/<owner>/<repo>/api:<SHA>` from GHCR, logged in with
+   the run's own token. Fails clearly if that commit has no published image.
+2. **Remember the running version**, to be able to put it back.
+3. **Start the new version**: removes the old container and starts the new one
+   with `--restart unless-stopped` (back up by itself after a crash or reboot).
+   The MLflow address, login and `MODEL_URI` are passed as environment variables.
+   The swap leaves the API down for a few seconds.
+4. **Check it works**: waits up to 2 minutes for `/health`, then sends a real
+   flight to `/classify`, which must succeed. That one request catches every
+   problem: without a model the API answers 503, and a label other than the three
+   is a 500. If it fails, the run shows the API's answer (e.g.
+   `{"detail":"Model not loaded"}`) and the container's log.
+5. **Roll back** (only if the check failed and something was running before):
+   starts the previous image again, so a bad deployment doesn't leave the
+   endpoint broken. The run still shows as failed.
+6. **Clean up** (always): logs out of GHCR and keeps only the two newest API
+   images on the VM (the running one and the one before, for rollbacks).
+
+The deployed commit and a link to the API are shown on the run page and under the
+repo's **Deployments**, through the `production` environment.
+
+Why it's built this way:
+
+- **Reusable workflow instead of `workflow_run`**: the tutorial chains workflows
+  with `workflow_run`, but there `github.sha` is the latest commit of the default
+  branch, not the commit that was tested, so it can deploy the wrong image.
+  Calling `deploy.yml` from `ci.yml` passes the exact SHA.
+- **Runs on VM2 only**: `runs-on` includes the `deploy` label, which only VM2's
+  runner has. "Deploying" means starting the container on the machine the job
+  runs on, so it must not run on another runner.
+- **GitHub environment `production`**: every deployment is listed under the
+  repo's **Deployments**, with its time, commit and a link to the API. Protection
+  rules can be added there later (e.g. require an approval before deploying).
+- **Health check and rollback**: the tutorial's deploy starts the container and
+  stops there; here a deployment only counts as successful once the API answers
+  a real request, and a failed one is undone.
 
 ## Setup (once, on GitHub)
 
@@ -145,13 +231,22 @@ but GitHub must allow it:
   admin may also need to allow GitHub Actions to create packages
   (Organization settings → Packages).
 - After the first push, the image appears under the repository's **Packages**.
-  It is private by default; the deployment VM will need to log in to pull it
-  (or make the package public in its **Package settings**).
+  It is private by default; `deploy.yml` logs in with the run's token to pull it.
+
+Deploying needs:
+
+- **The `deploy` label on VM2's runner**: Settings → Actions → Runners → `cpu` →
+  edit labels → add `deploy`. Without it the deploy job waits forever for a runner.
+- **A model with the `@production` alias in MLflow** (Models → flight-delay →
+  pick a version → add the alias). Without it the API starts with no model, the
+  check fails and the deployment is rolled back (or, on the very first deployment,
+  left running with `/classify` answering 503).
+- Nothing else: the `production` environment is created automatically on the
+  first deployment, and the MLflow login reuses the secrets above.
 
 ## Coming next
 
 | Workflow | When | What |
 |---|---|---|
-| `deploy.yml` | Next | Pulls the image on the deployment VM, restarts it, checks `/classify` with the real model |
-| E2E check + promotion | After deploy | Tests the new image with the `@staging` model, then moves `@production` if it isn't worse |
+| E2E check + promotion | Next | Tests the new image with the `@staging` model, then moves `@production` if it isn't worse, and redeploys |
 | `monitor.yml` | December | Scheduled drift and performance checks, with alerts |
