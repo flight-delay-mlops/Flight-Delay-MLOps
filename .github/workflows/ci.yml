@@ -1,4 +1,6 @@
-# Lint and test every change before it reaches dev or main.
+# Lint and test every change before it reaches dev or main, then build the API image.
+# On main the image is also published to GitHub's container registry (GHCR) and
+# deployed to VM2 (deploy.yml).
 name: CI
 
 on:
@@ -9,9 +11,15 @@ on:
   workflow_dispatch: 
 
 
+# A new push to a PR cancels its run still in progress. Runs on dev/main are never
+# cancelled, so every merged commit gets its image pushed
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# The token GitHub gives each run can only read the code, unless a job asks for more
+permissions:
+  contents: read
 
 jobs:
   test:
@@ -27,7 +35,9 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-          cache-dependency-path: requirements*.txt
+          cache-dependency-path: |
+            requirements*.txt
+            api/requirements.txt
 
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
@@ -37,3 +47,89 @@ jobs:
 
       - name: Run tests
         run: pytest -v
+
+  api-image:
+    # Only code that passed lint and tests gets an image
+    needs: test
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write  # lets the run's token push to GHCR
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set image name
+        # ghcr.io/<owner>/<repo>/api, lowercased: image names can't have capitals
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}/api" >> "$GITHUB_ENV"
+
+      - name: Build image
+        # The labels link the image to this repo on GitHub and record the commit it came from
+        run: |
+          docker build -f api/Dockerfile -t flight-delay-api:ci \
+            --label "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
+            --label "org.opencontainers.image.revision=${{ github.sha }}" \
+            .
+
+      - name: Smoke test
+        # Start the image without MLflow access: the app must still come up, report that
+        # no model is loaded, and answer requests with the right error codes.
+        # MLflow points at an address where nothing answers, with retries off, so loading fails
+        # at once. With no address at all MLflow would try to create a local mlflow.db in /app,
+        # which the container's user can't write, and retry for ~100 s before giving up
+        run: |
+          name="api-smoke-${{ github.run_id }}"
+          docker run -d --name "$name" -p 127.0.0.1::8000 \
+            -e MLFLOW_TRACKING_URI=http://127.0.0.1:1 -e MLFLOW_HTTP_REQUEST_MAX_RETRIES=0 \
+            flight-delay-api:ci
+          url="http://$(docker port "$name" 8000 | head -1)"
+
+          for i in $(seq 30); do
+            curl -sf "$url/health" > /dev/null && break
+            sleep 2
+          done
+          health=$(curl -sf "$url/health") || { echo "::error::/health never answered"; exit 1; }
+          echo "/health: $health"
+          echo "$health" | grep -q '"model_loaded":false' || { echo "::error::/health should report no model"; exit 1; }
+
+          code() { curl -s -o /dev/null -w '%{http_code}' -X POST "$url/classify" \
+                     -H 'Content-Type: application/json' -d "$1"; }
+          valid='{"instances": [{"FL_DATE": "2024-01-15", "ORIGIN": "JFK"}]}'
+          test "$(code "$valid")" = 503 || { echo "::error::valid request without a model should be 503"; exit 1; }
+          test "$(code '{"instances": []}')" = 422 || { echo "::error::empty instances should be 422"; exit 1; }
+          echo "Smoke test passed"
+
+      - name: Push to GHCR
+        # Not for PRs: only code that is on main (or run by hand) is published.
+        # The commit SHA tag never moves, so any published commit can be deployed again
+        if: github.event_name != 'pull_request'
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker tag flight-delay-api:ci "$IMAGE:${{ github.sha }}"
+          docker push "$IMAGE:${{ github.sha }}"
+          echo "Published \`$IMAGE:${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Clean up
+        # The runner VM keeps its Docker state between runs: remove what this run added,
+        # but keep the flight-delay-api:ci image so the next build reuses its layers
+        if: always()
+        run: |
+          docker rm -f "api-smoke-${{ github.run_id }}" 2>/dev/null || true
+          docker rmi "$IMAGE:${{ github.sha }}" 2>/dev/null || true
+          docker logout ghcr.io 2>/dev/null || true
+          docker image prune -f > /dev/null
+
+  deploy:
+    # Every commit merged into main is deployed once its image is published.
+    # Calling deploy.yml directly passes this exact commit's SHA along
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: api-image
+    uses: ./.github/workflows/deploy.yml
+    with:
+      image_tag: ${{ github.sha }}
+    secrets: inherit  # deploy.yml needs the MLflow login
+    permissions:
+      contents: read
+      packages: read
