@@ -56,6 +56,11 @@ The model is loaded **once, at startup**. If loading fails the app still starts 
 answers 503, so `/health` shows what's wrong. After moving `@production` to another
 version, restart the API to serve it.
 
+Without `MLFLOW_TRACKING_URI`, MLflow doesn't fail: it looks for the model in a local
+database file, `mlflow.db`, created in the current folder (don't commit it). In the
+container that folder isn't writable, so MLflow retries for about 100 s and the app
+answers nothing until then.
+
 ## Run it locally
 
 From the repository root, in the project's virtual environment:
@@ -108,3 +113,13 @@ ghcr.io/flight-delay-mlops/flight-delay-mlops/api:<commit SHA>
 
 One tag per commit, never moved, so any version can be deployed or rolled back
 to by its SHA. See [.github/workflows/README.md](../.github/workflows/README.md).
+
+## Deployed API
+
+Every merge into `main` is deployed to VM2 by `deploy.yml`:
+
+**http://10.17.0.156:8000/classify** (docs at `/docs`, status at `/health`)
+
+It serves `models:/flight-delay@production`. After moving that alias in MLflow,
+run **Actions → Deploy → Run workflow** on `main` to restart the API with the new
+model. How to check the container on VM2: [docs/infrastructure.md](../docs/infrastructure.md#deployment).

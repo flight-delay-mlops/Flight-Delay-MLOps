@@ -1,0 +1,123 @@
+# Continuous deployment: run a published API image on the deployment VM (VM2), serving the
+# @production model, check that it answers, and roll back to the previous version if not.
+name: Deploy
+
+on:
+  # Called by ci.yml after it publishes the image of a commit merged into main
+  workflow_call:
+    inputs:
+      image_tag:
+        type: string
+        required: true
+  # By hand: redeploy (e.g. after moving @production in MLflow) or roll back to an older commit
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Commit SHA of the image to deploy (empty: the commit of the chosen branch)"
+        type: string
+        required: false
+
+permissions:
+  contents: read
+  packages: read  # pull the image from GHCR
+
+jobs:
+  deploy:
+    # The `deploy` label is only on VM2's runner, so the API never lands on another machine
+    runs-on: [self-hosted, Linux, X64, deploy]
+    timeout-minutes: 15
+    # Shows up under the repo's Deployments, with a history of what was deployed when
+    environment:
+      name: production
+      url: http://10.17.0.156:8000/docs
+    # One deployment at a time; a new one waits instead of cancelling a half-done swap
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+
+    env:
+      CONTAINER: flight-delay-api
+      PORT: "8000"
+      TAG: ${{ inputs.image_tag || github.sha }}
+      # Passed into the container with `docker run -e NAME` (values never on the command line)
+      MODEL_URI: models:/flight-delay@production
+      MLFLOW_TRACKING_URI: http://10.17.0.167:5000
+      MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
+      MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
+
+    steps:
+      - name: Set image name
+        # ghcr.io/<owner>/<repo>/api, lowercased: image names can't have capitals
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}/api" >> "$GITHUB_ENV"
+
+      - name: Pull image
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker pull "$IMAGE:$TAG" || {
+            echo "::error::No image $IMAGE:$TAG. Only commits that CI ran on main (or by hand) have one."
+            exit 1
+          }
+
+      - name: Remember the running version
+        # Used to roll back if the new version doesn't work
+        id: previous
+        run: |
+          image=$(docker inspect -f '{{.Config.Image}}' "$CONTAINER" 2>/dev/null || true)
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "Running before this deployment: ${image:-nothing}"
+
+      - name: Start the new version
+        # Replaces the old container (a few seconds without service). --restart brings the
+        # API back after a crash or a VM reboot
+        run: |
+          docker rm -f "$CONTAINER" 2>/dev/null || true
+          docker run -d --name "$CONTAINER" --restart unless-stopped -p "$PORT:8000" \
+            -e MODEL_URI -e MLFLOW_TRACKING_URI -e MLFLOW_TRACKING_USERNAME -e MLFLOW_TRACKING_PASSWORD \
+            "$IMAGE:$TAG"
+
+      - name: Check it works
+        # The app only answers once it has tried to load the model, which can take a while.
+        # Then it must classify a real flight. That one request covers every failure: with no
+        # model the API answers 503, and a label other than the three is a 500 (ClassifyResponse
+        # only accepts those three). --fail-with-body prints the API's reason
+        run: |
+          url="http://127.0.0.1:$PORT"
+          for i in $(seq 60); do
+            curl -sf "$url/health" > /dev/null && break
+            sleep 2
+          done
+
+          # A real flight, as the evaluation will send it
+          curl -s --fail-with-body -X POST "$url/classify" -H 'Content-Type: application/json' -d '{
+            "instances": [{"FL_DATE": "2023-07-02", "OP_UNIQUE_CARRIER": "9E", "OP_CARRIER_FL_NUM": 4900,
+              "TAIL_NUM": "N307PQ", "ORIGIN": "DTW", "ORIGIN_STATE_ABR": "MI", "DEST": "DSM",
+              "DEST_STATE_ABR": "IA", "CRS_DEP_TIME": 900, "DEP_TIME_BLK": "0900-0959",
+              "CRS_ARR_TIME": 1042, "ARR_TIME_BLK": "1000-1059", "CRS_ELAPSED_TIME": 102.0,
+              "DISTANCE": 528.0}]}' || {
+            echo; echo "::error::The new version didn't classify the test flight (answer above, log below)"
+            docker logs --tail 50 "$CONTAINER"; exit 1
+          }
+
+      - name: Roll back
+        # Only if a check failed and something was running before: put it back
+        if: failure() && steps.previous.outputs.image != ''
+        env:
+          PREVIOUS: ${{ steps.previous.outputs.image }}
+        run: |
+          docker rm -f "$CONTAINER" 2>/dev/null || true
+          docker run -d --name "$CONTAINER" --restart unless-stopped -p "$PORT:8000" \
+            -e MODEL_URI -e MLFLOW_TRACKING_URI -e MLFLOW_TRACKING_USERNAME -e MLFLOW_TRACKING_PASSWORD \
+            "$PREVIOUS"
+          echo "::warning::Deployment failed, rolled back to $PREVIOUS"
+
+      - name: Clean up
+        # Log out, and keep only the two newest images of the API (the running one and the
+        # one before, for rollbacks) so the VM's disk doesn't fill up. Docker refuses to
+        # delete an image a container uses, so the running one is always safe
+        if: always()
+        run: |
+          docker logout ghcr.io 2>/dev/null || true
+          # Guard: with an empty name, `docker images` would list every image on the VM
+          if [ -n "$IMAGE" ]; then
+            docker images "$IMAGE" --format '{{.Repository}}:{{.Tag}}' | tail -n +3 | xargs -r docker rmi 2>/dev/null || true
+          fi

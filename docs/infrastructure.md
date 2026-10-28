@@ -5,7 +5,7 @@ Everything runs on two DEI VMs, reachable only through the DEI VPN.
 | VM                | IP          | Runs                                                        |
 | ----------------- | ----------- | ----------------------------------------------------------- |
 | VM1 (4 CPU, 8 GB) | 10.17.0.167 | MLflow server, DVC store                                    |
-| VM2 (2 CPU, 4 GB) | 10.17.0.156 | GitHub Actions runner `cpu`, later the API and monitoring |
+| VM2 (2 CPU, 4 GB) | 10.17.0.156 | GitHub Actions runner `cpu`, the inference API (port 8000), later monitoring |
 
 Both run Ubuntu 24.04 with Docker, set up by `infra/setup_vm.sh`. Log in with `ssh admin@<IP>`.
 
@@ -24,7 +24,7 @@ MLFLOW_TRACKING_PASSWORD=...
 `src/train.py` reads them from `.env` (copy `.env.template`, it's git-ignored), so `dvc repro` logs to MLflow with your login. Each training run is logged to the `flight-delay` experiment and registered as a new version of the `flight-delay` model. Aliases point at versions:
 
 - `@staging`: the newest trained model, set automatically by `train.py`
-- `@production`: the model the API serves, moved by hand in the UI (Models → flight-delay) after comparing runs
+- `@production`: the model the API serves, moved by hand in the UI (Models → flight-delay) after comparing runs. The API only loads it at startup, so afterwards run **Actions → Deploy → Run workflow** on `main` to restart it with the new model (see [Deployment](#deployment))
 
 Load a model in Python with `mlflow.pyfunc.load_model("models:/flight-delay@production")`.
 
@@ -80,8 +80,8 @@ The repo forces LF line endings (`.gitattributes`): DVC hashes files byte by byt
 Training is the `train` stage in `dvc.yaml` (`src/train.py`, settings under `train:` in `params.yaml`). It logs each run to MLflow and registers the model as `@staging`.
 
 - **Locally:** `dvc repro` with your `.env` filled in and the VPN on.
-- **Automatically:** a merge to `main` that changes the pipeline runs `pipeline.yml` on the runner. It pulls the data, runs `dvc repro` inside the training image (root `Dockerfile`: Python + `requirements.txt`) and pushes the outputs.
-- **By hand:** Actions → Pipeline → Run workflow, with **Retrain even if nothing changed** ticked to train even when DVC sees no changes.
+- **Automatically:** a merge to `main` that changes the pipeline runs `train.yml` on the runner. It pulls the data, runs `dvc repro` inside the training image (root `Dockerfile`: Python + `requirements.txt`) and pushes the outputs.
+- **By hand:** Actions → Train → Run workflow, with **Retrain even if nothing changed** ticked to train even when DVC sees no changes.
 
 To run the same container yourself:
 
@@ -90,14 +90,39 @@ docker build -t flight-delay-train .
 docker run --rm --env-file .env -v "$PWD:$PWD" -w "$PWD" --user "$(id -u):$(id -g)" -e HOME=/tmp -e USER=$USER flight-delay-train dvc repro
 ```
 
+## Deployment
+
+The inference API ([api/README.md](../api/README.md)) runs on VM2 as the Docker container `flight-delay-api`:
+
+- Endpoint: **http://10.17.0.156:8000/classify** (interactive docs at `/docs`, status at `/health`)
+- Image: `ghcr.io/flight-delay-mlops/flight-delay-mlops/api:<commit SHA>`, published by CI
+- Model: `models:/flight-delay@production`, loaded from MLflow at startup
+
+It is deployed by [deploy.yml](../.github/workflows/deploy.yml):
+
+- **Automatically**, after every merge into `main` (CI builds and publishes the image, then deploys it).
+- **By hand**, from Actions → Deploy → Run workflow: leave the SHA empty to redeploy the latest `main` (e.g. after moving `@production`), or give an older commit's SHA to roll back to it.
+
+If the new version doesn't answer correctly, the workflow puts the previous one back. On VM2:
+
+```bash
+docker ps --filter name=flight-delay-api      # running? "healthy"?
+docker logs --tail 100 flight-delay-api       # server log, e.g. why the model didn't load
+curl http://localhost:8000/health             # {"status":"healthy","model_loaded":true}
+```
+
+The container restarts by itself after a crash or a VM reboot (`--restart unless-stopped`).
+
 ## Runners
 
 Self-hosted GitHub Actions runners pick up workflow jobs. GitHub's own runners can't reach the VMs.
 
-| Runner  | Where                     | Notes                           |
-| ------- | ------------------------- | ------------------------------- |
-| `cpu` | VM2, `~/actions-runner` | systemd service, starts on boot |
-| `gpu` | João's computer lol      | offline when the PC is off      |
+| Runner  | Where                     | Labels | Notes                           |
+| ------- | ------------------------- | ------ | ------------------------------- |
+| `cpu` | VM2, `~/actions-runner` | `self-hosted`, `Linux`, `X64`, `deploy` | systemd service, starts on boot |
+| `gpu` | João's computer lol      | defaults | offline when the PC is off      |
+
+Jobs pick a runner by **label**, not by name. The extra `deploy` label exists only on VM2's runner, so the deploy job always runs there (the API must run on VM2, not on whichever machine is free). To add it: Settings → Actions → Runners → `cpu` → edit the labels → add `deploy`. Without it, deploy jobs wait in the queue with "Waiting for a runner".
 
 Check status on GitHub: Settings → Actions → Runners.
 On VM2 you can check status with:
