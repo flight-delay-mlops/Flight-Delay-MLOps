@@ -1,0 +1,8 @@
+# Used instead of the root .dockerignore when building api/Dockerfile: Docker (BuildKit)
+# looks for "<Dockerfile name>.dockerignore" next to the Dockerfile. Paths are relative
+# to the build context, the repository root.
+# Only the API code goes into the image; data/, tests and the rest stay out.
+*
+!api/
+api/**/__pycache__
+api/Dockerfile*

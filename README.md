@@ -8,12 +8,13 @@ Performance data from 2022–2023. The assignment is in
 - VMs, MLflow, DVC and runners: [docs/infrastructure.md](docs/infrastructure.md)
 - Branches, commits and pull requests: [CONTRIBUTING.md](CONTRIBUTING.md)
 - CI/CD workflows: [.github/workflows/README.md](.github/workflows/README.md)
+- Inference API (endpoints, running it, its Docker image): [api/README.md](api/README.md)
 
 ## Repository structure
 
 ```
 .github/workflows/  CI/CD pipelines (GitHub Actions)
-api/                Inference service: FastAPI app and its Dockerfile
+api/                Inference service: FastAPI app, its Dockerfile and README
 data/               Managed by DVC, never committed to Git directly
   raw.dvc           Pointer to the raw BTS files (data/raw/)
   prepared/         Output of the prepare stage (train/val Parquet)
@@ -23,6 +24,7 @@ infra/              Everything deployed by hand on the VMs
   mlflow/           Docker setup of the MLflow server on VM1
 src/                Data and training pipeline code (run by DVC stages)
 tests/              Automated tests (pytest), run by CI
+Dockerfile          Training image: the pipeline workflow runs `dvc repro` in it
 dvc.yaml, dvc.lock  Pipeline definition and the exact versions it last ran with
 params.yaml         Pipeline settings, tracked by DVC
 pyproject.toml      Settings for pytest and ruff
