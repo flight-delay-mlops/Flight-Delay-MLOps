@@ -221,3 +221,7 @@ __marimo__/
 
 # Original BTS zip downloads (not needed, data/raw has the same data)
 data/zips/
+
+# Local MLflow files, created when MLflow runs without a server address
+mlflow.db
+mlruns/
