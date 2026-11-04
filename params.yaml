@@ -1,5 +1,6 @@
 prepare:
   val_start: '2023-07-01'  # flights from this date on go to validation
 train:
-  strategy: most_frequent  # baseline: "most_frequent" (always on_time) or "stratified" (random)
-  seed: 42                 # makes the random baseline reproducible
+  model: logreg            # a model from src/models.py: logreg, most_frequent or stratified
+  sample_rows: 1000000     # training flights sampled at random (all 9.8M don't fit in the runner's memory)
+  seed: 42                 # makes the sample and the random baseline reproducible

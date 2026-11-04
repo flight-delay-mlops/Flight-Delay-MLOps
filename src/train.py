@@ -1,5 +1,5 @@
-# Trains the model on the prepared data and logs everything to MLflow.
-# For now the models are baselines: always the most common class, or random guesses.
+# Trains the model chosen in params.yaml on the prepared data and logs everything to MLflow.
+# The models themselves are in src/models.py.
 import json
 
 import mlflow
@@ -7,9 +7,9 @@ import pandas as pd
 import yaml
 from dotenv import load_dotenv
 from mlflow import MlflowClient
-from sklearn.dummy import DummyClassifier
 from sklearn.metrics import accuracy_score, f1_score
 
+from src.models import COLUMNS, build_model
 from src.prepare import LABELS
 
 MODEL_NAME = "flight-delay"
@@ -40,30 +40,34 @@ def main():
     with open("params.yaml") as f:
         params = yaml.safe_load(f)["train"]
 
-    # The baseline ignores the features, so only the training labels are loaded:
-    # all 9.8M training rows would not fit in the runner VM's 4 GB.
-    # pyarrow types keep the validation set small in memory too
-    y_train = pd.read_parquet("data/prepared/train.parquet", columns=["label"]).label
-    X_val = pd.read_parquet("data/prepared/val.parquet", dtype_backend="pyarrow")
+    # Only the columns the models use, with pyarrow types to keep memory low:
+    # the runner VM has 4 GB. Training uses a random sample of the 9.8M flights
+    X_train = pd.read_parquet("data/prepared/train.parquet", columns=COLUMNS + ["label"],
+                              dtype_backend="pyarrow")
+    X_train = X_train.sample(n=params["sample_rows"], random_state=params["seed"])
+    y_train = X_train.pop("label")
+    X_val = pd.read_parquet("data/prepared/val.parquet", columns=COLUMNS + ["label"],
+                            dtype_backend="pyarrow")
     y_val = X_val.pop("label")
 
-    # most_frequent: always predicts on_time
-    # stratified: random guesses, in the same proportions as the training labels
-    model = DummyClassifier(strategy=params["strategy"], random_state=params["seed"])
-    model.fit(pd.DataFrame(index=y_train.index), y_train)  # no feature columns
+    model = build_model(params["model"], params["seed"])
+    model.fit(X_train, y_train)
     y_pred = model.predict(X_val)
     metrics = evaluate(y_val, y_pred)
     print(json.dumps(metrics, indent=2))
 
     mlflow.set_experiment(MODEL_NAME)
-    with mlflow.start_run(run_name=f"baseline-{params['strategy']}"):
-        mlflow.log_params({**params, "train_rows": len(y_train), "val_rows": len(X_val)})
+    with mlflow.start_run(run_name=params["model"]):
+        mlflow.log_params({**params, "train_rows": len(y_train), "val_rows": len(y_val)})
         mlflow.set_tag("data_md5", data_md5())
         mlflow.log_metrics(metrics)
         confusion = pd.crosstab(y_val, y_pred, rownames=["true"], colnames=["predicted"])
         mlflow.log_text(confusion.to_csv(), "confusion_matrix.csv")
+        # MLflow saves the model with skops, which only loads types it was told are safe.
+        # The one-hot encoder stores a numpy dtype, so that type is declared here
         info = mlflow.sklearn.log_model(model, name="model", registered_model_name=MODEL_NAME,
-                                        input_example=X_val.head())
+                                        input_example=X_val.head(),
+                                        skops_trusted_types=["numpy.dtype"])
 
     # The newest model is the candidate; promoting it to @production is a separate decision
     MlflowClient().set_registered_model_alias(MODEL_NAME, "staging",
