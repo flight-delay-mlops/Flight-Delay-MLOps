@@ -1,0 +1,47 @@
+# Promotion: moves @production to the model in @staging (one that passed the quality gate in
+# src/train.py), then redeploys the API, which only loads the model at startup.
+# By hand only: putting a model in production is a human decision.
+name: Promote
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Move @production to the @staging model
+        env:
+          MLFLOW_TRACKING_URI: http://10.17.0.167:5000
+          MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
+          MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
+        run: python -m src.promote
+
+  deploy:
+    # Same API image (this branch's latest commit), now serving the promoted model
+    needs: promote
+    uses: ./.github/workflows/deploy.yml
+    with:
+      image_tag: ${{ github.sha }}
+    secrets: inherit  # deploy.yml needs the MLflow login
+    permissions:
+      contents: read
+      packages: read

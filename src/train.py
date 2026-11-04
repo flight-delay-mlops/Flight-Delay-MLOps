@@ -7,6 +7,7 @@ import pandas as pd
 import yaml
 from dotenv import load_dotenv
 from mlflow import MlflowClient
+from mlflow.exceptions import MlflowException
 from sklearn.metrics import accuracy_score, f1_score
 
 from src.models import COLUMNS, build_model
@@ -33,6 +34,15 @@ def data_md5():
     with open("dvc.lock") as f:
         lock = yaml.safe_load(f)
     return lock["stages"]["prepare"]["outs"][0]["md5"]
+
+
+def production_macro_f1(client):
+    # Macro-F1 of the model the API serves now, or None before anything was promoted
+    try:
+        version = client.get_model_version_by_alias(MODEL_NAME, "production")
+    except MlflowException:
+        return None
+    return client.get_run(version.run_id).data.metrics["macro_f1"]
 
 
 def main():
@@ -69,9 +79,21 @@ def main():
                                         input_example=X_val.head(),
                                         skops_trusted_types=["numpy.dtype"])
 
-    # The newest model is the candidate; promoting it to @production is a separate decision
-    MlflowClient().set_registered_model_alias(MODEL_NAME, "staging",
-                                              info.registered_model_version)
+    # Quality gate: the new model only becomes the candidate (@staging) if it beats the model
+    # in production on the validation set. Every version stays in the registry, tagged with
+    # whether it passed. Promoting @staging to @production is a separate step (promote.py)
+    client = MlflowClient()
+    version = info.registered_model_version
+    best = production_macro_f1(client)
+    passed = best is None or metrics["macro_f1"] > best
+    client.set_model_version_tag(MODEL_NAME, version, "quality_gate",
+                                 "passed" if passed else "failed")
+    if passed:
+        client.set_registered_model_alias(MODEL_NAME, "staging", version)
+        print(f"Version {version} passed the quality gate and is now @staging")
+    else:
+        print(f"Version {version} (macro-F1 {metrics['macro_f1']:.3f}) doesn't beat "
+              f"@production ({best:.3f}), so @staging stays where it was")
 
 
 if __name__ == "__main__":

@@ -23,8 +23,8 @@ MLFLOW_TRACKING_PASSWORD=...
 
 `src/train.py` reads them from `.env` (copy `.env.template`, it's git-ignored), so `dvc repro` logs to MLflow with your login. Each training run is logged to the `flight-delay` experiment and registered as a new version of the `flight-delay` model. Aliases point at versions:
 
-- `@staging`: the newest trained model, set automatically by `train.py`
-- `@production`: the model the API serves, moved by hand in the UI (Models → flight-delay) after comparing runs. The API only loads it at startup, so afterwards run **Actions → Deploy → Run workflow** on `main` to restart it with the new model (see [Deployment](#deployment))
+- `@staging`: the candidate. `train.py` only moves it to a new version that passes the **quality gate**: a higher macro-F1 on the validation set than the `@production` model. Every version is tagged `quality_gate: passed` or `failed`
+- `@production`: the model the API serves. To promote the candidate, run **Actions → Promote → Run workflow** on `main`: it moves `@production` to the `@staging` version and redeploys the API, which only loads the model at startup (see [Deployment](#deployment))
 
 Load a model in Python with `mlflow.pyfunc.load_model("models:/flight-delay@production")`.
 
@@ -77,7 +77,7 @@ The repo forces LF line endings (`.gitattributes`): DVC hashes files byte by byt
 
 ## Training
 
-Training is the `train` stage in `dvc.yaml` (`src/train.py`, the models in `src/models.py`, settings under `train:` in `params.yaml`). It logs each run to MLflow and registers the model as `@staging`.
+Training is the `train` stage in `dvc.yaml` (`src/train.py`, the models in `src/models.py`, settings under `train:` in `params.yaml`). It logs each run to MLflow and registers the model, as `@staging` if it passes the quality gate (see [MLflow](#mlflow)).
 
 - **Locally:** `dvc repro` with your `.env` filled in and the VPN on.
 - **Automatically:** a merge to `main` that changes the pipeline runs `train.yml` on the runner. It pulls the data, runs `dvc repro` inside the training image (root `Dockerfile`: Python + `requirements.txt`) and pushes the outputs.
@@ -101,7 +101,7 @@ The inference API ([api/README.md](../api/README.md)) runs on VM2 as the Docker 
 It is deployed by [deploy.yml](../.github/workflows/deploy.yml):
 
 - **Automatically**, after every merge into `main` (CI builds and publishes the image, then deploys it).
-- **By hand**, from Actions → Deploy → Run workflow: leave the SHA empty to redeploy the latest `main` (e.g. after moving `@production`), or give an older commit's SHA to roll back to it.
+- **By hand**, from Actions → Deploy → Run workflow: leave the SHA empty to redeploy the latest `main`, or give an older commit's SHA to roll back to it.
 
 If the new version doesn't answer correctly, the workflow puts the previous one back. On VM2:
 
