@@ -67,7 +67,7 @@ Always commit `dvc.lock` together with the change that produced it.
 ### Trying different settings
 
 ```bash
-dvc exp run -S train.strategy=stratified             # change a value in params.yaml and run the pipeline
+dvc exp run -S train.model=stratified                # change a value in params.yaml and run the pipeline
 dvc exp show                                         # table of every run's params and metrics
 ```
 
@@ -77,7 +77,7 @@ The repo forces LF line endings (`.gitattributes`): DVC hashes files byte by byt
 
 ## Training
 
-Training is the `train` stage in `dvc.yaml` (`src/train.py`, settings under `train:` in `params.yaml`). It logs each run to MLflow and registers the model as `@staging`.
+Training is the `train` stage in `dvc.yaml` (`src/train.py`, the models in `src/models.py`, settings under `train:` in `params.yaml`). It logs each run to MLflow and registers the model as `@staging`.
 
 - **Locally:** `dvc repro` with your `.env` filled in and the VPN on.
 - **Automatically:** a merge to `main` that changes the pipeline runs `train.yml` on the runner. It pulls the data, runs `dvc repro` inside the training image (root `Dockerfile`: Python + `requirements.txt`) and pushes the outputs.

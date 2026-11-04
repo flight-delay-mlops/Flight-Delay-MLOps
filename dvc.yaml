@@ -12,6 +12,7 @@ stages:
     cmd: python -m src.train
     deps:
       - src/train.py
+      - src/models.py
       - data/prepared
     params:
       - train
