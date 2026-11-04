@@ -120,6 +120,5 @@ Every merge into `main` is deployed to VM2 by `deploy.yml`:
 
 **http://10.17.0.156:8000/classify** (docs at `/docs`, status at `/health`)
 
-It serves `models:/flight-delay@production`. After moving that alias in MLflow,
-run **Actions → Deploy → Run workflow** on `main` to restart the API with the new
-model. How to check the container on VM2: [docs/infrastructure.md](../docs/infrastructure.md#deployment).
+It serves `models:/flight-delay@production`. **Actions → Promote → Run workflow**
+moves that alias to the `@staging` model and restarts the API with it. How to check the container on VM2: [docs/infrastructure.md](../docs/infrastructure.md#deployment).

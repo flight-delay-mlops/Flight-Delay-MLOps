@@ -10,6 +10,7 @@ on GitHub and as checks on each pull request.
 | [ci.yml](ci.yml) | Every PR into `dev` or `main`, every push to them | Checks the code (lint + tests), then builds and smoke-tests the API image; on `main` also publishes it to GHCR and deploys it |
 | [train.yml](train.yml) | A merge to `main` that changes the pipeline, or by hand | Runs the DVC pipeline (prepare + train) and registers the new model in MLflow |
 | [deploy.yml](deploy.yml) | Called by `ci.yml` on `main`, or by hand | Runs an API image on VM2 with the `@production` model, checks it, rolls back if it fails |
+| [promote.yml](promote.yml) | By hand | Moves `@production` to the `@staging` model (one that passed the quality gate in `train.py`), then runs `deploy.yml` |
 
 All run on our **self-hosted runners**, not on GitHub's machines, because only
 machines inside DEI's network can reach the VMs. See
@@ -22,7 +23,7 @@ Each file is named after what it does, the usual convention (lowercase, one word
 | File | Practice | Ends with |
 |---|---|---|
 | `ci.yml` | **Continuous Integration**: is this change OK to merge? | Tested code and an image that builds and starts |
-| `train.yml` | **Continuous Training**: rebuild the data and the model | A new model version in MLflow (`@staging`) |
+| `train.yml` | **Continuous Training**: rebuild the data and the model | A new model version in MLflow (`@staging` if it beats production) |
 | `ci.yml` (on `main`) | **Continuous Delivery**: is a version *ready* to deploy? | An image in GHCR tagged with its commit SHA |
 | `deploy.yml` | **Continuous Deployment**: is the new version *running*? | The API live on VM2 |
 
@@ -163,8 +164,7 @@ When it runs:
 
 - **After every merge into `main`**: `ci.yml` calls it once the image is published.
 - **By hand** (Actions → Deploy → Run workflow): leave the SHA empty to redeploy
-  the latest commit of the chosen branch, e.g. after moving `@production` in MLflow
-  (the API only loads the model at startup). Give an older commit's SHA to roll
+  the latest commit of the chosen branch. Give an older commit's SHA to roll
   back to that version.
 
 Steps:
@@ -248,5 +248,4 @@ Deploying needs:
 
 | Workflow | When | What |
 |---|---|---|
-| E2E check + promotion | Next | Tests the new image with the `@staging` model, then moves `@production` if it isn't worse, and redeploys |
 | `monitor.yml` | December | Scheduled drift and performance checks, with alerts |
