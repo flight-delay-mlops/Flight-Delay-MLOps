@@ -5,6 +5,7 @@ severity (`on_time`, `moderate_delay`, `severe_delay`), using BTS On-Time
 Performance data from 2022–2023. The assignment is in
 [docs/statement/](docs/statement/).
 
+- Inference endpoint (IP, port, how to call it): [ENDPOINT.md](ENDPOINT.md)
 - VMs, MLflow, DVC and runners: [docs/infrastructure.md](docs/infrastructure.md)
 - Branches, commits and pull requests: [CONTRIBUTING.md](CONTRIBUTING.md)
 - CI/CD workflows: [.github/workflows/README.md](.github/workflows/README.md)
