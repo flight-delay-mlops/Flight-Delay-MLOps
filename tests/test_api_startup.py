@@ -35,7 +35,8 @@ def test_health_reports_a_loaded_model(client):
     assert response.json() == {"status": "healthy", "model_loaded": True}
 
 
-def test_health_only_accepts_get(client):
+def test_health_accepts_get_and_head_only(client):
+    assert client.head("/health").status_code == 200
     assert client.post("/health").status_code == 405
 
 
