@@ -45,7 +45,8 @@ app.add_exception_handler(Exception, handle_unexpected_error)
 app.state.model = None
 
 
-@app.get("/health")
+# HEAD too: some uptime checkers only ask for the headers
+@app.api_route("/health", methods=["GET", "HEAD"])
 def health():
     """Report that the service is up and whether a model is loaded."""
     return {"status": "healthy", "model_loaded": app.state.model is not None}

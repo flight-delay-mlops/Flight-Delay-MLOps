@@ -30,5 +30,8 @@ curl -X POST http://10.17.0.156:8000/classify \
 {"classifications": ["on_time"]}
 ```
 
+`/classify` only accepts POST, so opening it in a browser gives `405 Method Not Allowed`.
+To try it by hand, use `/docs` → `POST /classify` → **Try it out**.
+
 Invalid requests get a `422` that says which flight and field is wrong. More details
 are in [api/README.md](api/README.md).
