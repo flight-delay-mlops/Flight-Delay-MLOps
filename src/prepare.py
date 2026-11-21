@@ -12,7 +12,7 @@ FEATURES = [
     "FL_DATE", "OP_UNIQUE_CARRIER", "OP_CARRIER_FL_NUM", "TAIL_NUM",
     "ORIGIN", "ORIGIN_STATE_ABR", "DEST", "DEST_STATE_ABR",
     "CRS_DEP_TIME", "DEP_TIME_BLK", "CRS_ARR_TIME", "ARR_TIME_BLK",
-    "CRS_ELAPSED_TIME", "DISTANCE",
+    "CRS_ELAPSED_TIME", "DISTANCE", "DEP_TIME"
 ]
 
 LABELS = ["on_time", "moderate_delay", "severe_delay"]
@@ -20,6 +20,7 @@ LABELS = ["on_time", "moderate_delay", "severe_delay"]
 # Outcome columns, used only to filter and label flights, never as features
 OUTCOMES = ["CANCELLED", "DIVERTED", "ARR_DELAY"]
 
+NEW_FEATURES = ['ROL_AVG']
 
 def raw_files(raw_dir):
     files = sorted(glob.glob(os.path.join(raw_dir, "*.csv.gz")))
@@ -60,9 +61,42 @@ def clean(df):
     df = filter_flights(df)
     return df.assign(label=label_delays(df.ARR_DELAY))[FEATURES + ["label"]]
 
+# Rolling window of the average delay in the last [window_length] time, per airport
+def add_rolling_average(df, window_length, lastWindow):
+    lastWindowSize = 0
+    if lastWindow is not None:
+        lastWindowSize = lastWindow.shape[0]
+        df = pd.concat([lastWindow, df], ignore_index=True)
 
-def prepare(df, val_start):
-    return split_by_date(clean(df), val_start)
+    # DEP_TIME is the time, in minutes (hhmm), at which the plane departed, in local time
+    # The calculation is the transformation from hhmm to hh*60+mm, without the use of % operator
+    # (% operator is not implemented in pyarrow)
+    df.index = pd.to_datetime(pd.to_datetime(df.FL_DATE) + pd.to_timedelta(
+        df.DEP_TIME - (40*df.DEP_TIME//100), unit='m')
+    )
+    df = df.sort_index()
+    # In case these are no values in window, the rol_avg is the delay (that's why min_periods=1)
+    df[NEW_FEATURES[0]] = df.groupby(['ORIGIN'])['ARR_DELAY'].transform(
+        lambda x: x.rolling(window=window_length, min_periods=1).mean())
+
+    lastFlightTime = df.index[-1]
+    limit = pd.Timestamp(
+        year=lastFlightTime.year + lastFlightTime.month//12,
+        month=(lastFlightTime.month%12) + 1,
+        day=1,
+        hour=0,
+        minute=0,
+        second=0
+    ) - pd.Timedelta(window_length)
+    newLastWindow = df[df.index > limit]
+    return df[lastWindowSize:].reset_index(drop=True), newLastWindow.reset_index(drop=True)
+
+def prepare(df, val_start, window_length, lastWindow):
+    df = filter_flights(df)
+    df, lastWindow = add_rolling_average(df, window_length, lastWindow)
+    df = clean(df)
+    train, val = split_by_date(df, val_start)
+    return train, val, lastWindow
 
 
 def main(raw_dir="data/raw", out_dir="data/prepared", params_path="params.yaml"):
@@ -72,11 +106,17 @@ def main(raw_dir="data/raw", out_dir="data/prepared", params_path="params.yaml")
     os.makedirs(out_dir, exist_ok=True)
     writers = {}
     counts = {"train": 0, "val": 0}
+    lastWindow = None
     try:
         # One monthly file at a time, appended to the outputs: memory stays at about
         # one month of data however many files there are (the runner VM has 4 GB)
         for path in raw_files(raw_dir):
-            train, val = prepare(read_raw(path), params["val_start"])
+            train, val, lastWindow = prepare(
+                read_raw(path),
+                params["val_start"],
+                params['window_length'],
+                lastWindow
+            )
             for name, part in (("train", train), ("val", val)):
                 table = pa.Table.from_pandas(part, preserve_index=False)
                 if name not in writers:
