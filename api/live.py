@@ -4,10 +4,12 @@ Each /classify request is saved with our predictions under its request_id. The t
 arrive later on /labels and are saved in the same row, which gives our live performance.
 On VM2 the database is on a Docker volume (DATA_DIR=/data, see deploy.yml).
 """
+import io
 import json
 import os
 import sqlite3
 
+import pandas as pd
 from sklearn.metrics import accuracy_score, f1_score
 
 LABELS = ["on_time", "moderate_delay", "severe_delay"]
@@ -32,13 +34,18 @@ def save_request(request_id, mode, flights, predictions):
 
 
 def save_labels(request_id, labels, outcomes):
-    """Store the true labels next to our predictions and score them. None if the id is unknown."""
+    """Store the true labels next to our predictions and score them.
+
+    Returns the request's flights and scores, or None if the id is unknown or was already
+    labelled (the leaderboard retries deliveries, and outcomes must not be counted twice).
+    """
     with connect() as db:
-        row = db.execute("SELECT predictions FROM requests WHERE request_id = ?",
-                         (request_id,)).fetchone()
+        row = db.execute("SELECT flights, predictions FROM requests "
+                         "WHERE request_id = ? AND labels IS NULL", (request_id,)).fetchone()
         if row is None:
             return None
-        predictions = json.loads(row[0])
+        flights = pd.read_json(io.StringIO(row[0]), orient="records")
+        predictions = json.loads(row[1])
         scores = {
             "accuracy": accuracy_score(labels, predictions),
             # The leaderboard's metric: the three classes count the same
@@ -49,4 +56,4 @@ def save_labels(request_id, labels, outcomes):
                    "WHERE request_id = ?",
                    (json.dumps(labels), json.dumps(outcomes), scores["accuracy"],
                     scores["macro_f1"], request_id))
-    return scores
+    return flights, scores

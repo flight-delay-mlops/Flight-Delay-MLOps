@@ -6,6 +6,7 @@ registered in MLflow. This is the endpoint the centralized evaluation calls.
 | File | What it holds |
 |---|---|
 | [main.py](main.py) | The app: loads the model at startup, `GET /health`, `POST /classify`, `POST /labels` |
+| [features.py](features.py) | Feature store (Feast): delay rates per airport, airline and route |
 | [live.py](live.py) | Keeps each leaderboard request and its true labels in SQLite (`live.db`), and scores them |
 | [schemas.py](schemas.py) | Request and response shapes (the 14 BTS columns of a flight) |
 | [errors.py](errors.py) | Error responses (422, 503, 500), all as `{"detail": ...}` |
@@ -54,6 +55,25 @@ anything else counts as a failed delivery.
 ```
 
 FastAPI also serves interactive docs at `/docs` while the app runs.
+
+## Feature store
+
+The model also uses how late flights of the flight's origin airport, airline and route
+(origin-destination) were in the last 30 days: average arrival delay and share of flights
+15+ min late. These are defined once, in [features.py](features.py), and kept in two places:
+
+- **Offline**, for training: `src/features.py` (DVC stage `features`) computes, for every key
+  and day of 2022-2023, the rates of the 30 days *before* that day. Training looks each
+  flight up by key and date, so its features never include its own delay or anything later.
+- **Online**, for serving: a [Feast](https://feast.dev) store (two SQLite files in
+  `DATA_DIR/feature_store`). `/classify` reads the latest rates of each flight's keys; keys
+  it knows nothing about get none, and the model fills in average values. `/labels` (live
+  mode only) adds the true delays to daily counts and writes the new 30-day rates, so the
+  online values follow the 2024 flights we are asked about. Sandbox (January) outcomes are
+  left out, and a request's outcomes are only counted once, even if delivered again.
+
+Only outcomes the leaderboard has already sent are used, all from earlier days than the
+flights being classified.
 
 ## Configuration
 

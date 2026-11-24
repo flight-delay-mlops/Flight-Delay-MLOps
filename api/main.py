@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from mlflow.exceptions import MlflowException
 
-from api import live
+from api import features, live
 from api.errors import (
     InputRejectedError,
     ModelNotLoadedError,
@@ -62,7 +62,8 @@ def classify(request: ClassifyRequest):
         raise ModelNotLoadedError()
     flights = request.to_dataframe()
     try:
-        predictions = model.predict(flights)
+        # The latest delay rates of each flight's airport, airline and route (Feast online store)
+        predictions = model.predict(features.add_online_features(flights))
     except MlflowException as error:
         if error.error_code != "INVALID_PARAMETER_VALUE":
             raise
@@ -82,10 +83,15 @@ def classify(request: ClassifyRequest):
 @app.post("/labels")
 def labels(request: LabelsRequest):
     """Receive the true labels of an earlier /classify request and score our predictions."""
-    scores = live.save_labels(request.request_id, request.labels, request.outcomes)
-    if scores is None:
-        logger.warning("Labels for unknown request %s", request.request_id)
+    saved = live.save_labels(request.request_id, request.labels, request.outcomes)
+    if saved is None:
+        logger.warning("Labels for unknown (or already labelled) request %s", request.request_id)
     else:
+        flights, scores = saved
+        # Real outcomes refresh the feature store. Only live ones: the sandbox is January
+        # flights, which would mix old outcomes into the current rates
+        if request.mode == "live":
+            features.learn_outcomes(flights, request.outcomes)
         # mode tells live traffic (scored) from the January sandbox, so they never get mixed up
         logger.info("%s request %s: accuracy %.3f, macro-F1 %.3f", request.mode,
                        request.request_id, scores["accuracy"], scores["macro_f1"])

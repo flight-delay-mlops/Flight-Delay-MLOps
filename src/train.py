@@ -3,6 +3,7 @@
 import json
 
 import mlflow
+import numpy as np
 import pandas as pd
 import yaml
 from dotenv import load_dotenv
@@ -10,7 +11,8 @@ from mlflow import MlflowClient
 from mlflow.exceptions import MlflowException
 from sklearn.metrics import accuracy_score, f1_score
 
-from src.models import COLUMNS, build_model
+from src.features import add_offline_features
+from src.models import CATEGORIES, COLUMNS, build_model
 from src.prepare import LABELS
 
 MODEL_NAME = "flight-delay"
@@ -36,6 +38,12 @@ def data_md5():
     return lock["stages"]["prepare"]["outs"][0]["md5"]
 
 
+def load_flights(split):
+    # Only the columns the models need, with pyarrow types to keep memory low
+    return pd.read_parquet(f"data/prepared/{split}.parquet", dtype_backend="pyarrow",
+                           columns=CATEGORIES + ["DISTANCE", "FL_DATE", "label"])
+
+
 def production_macro_f1(client):
     # Macro-F1 of the model the API serves now, or None before anything was promoted
     try:
@@ -50,25 +58,27 @@ def main():
     with open("params.yaml") as f:
         params = yaml.safe_load(f)["train"]
 
-    # Only the columns the models use, with pyarrow types to keep memory low:
-    # the runner VM has 4 GB. Training uses a random sample of the 9.8M flights
-    X_train = pd.read_parquet("data/prepared/train.parquet", columns=COLUMNS + ["label"],
-                              dtype_backend="pyarrow")
-    X_train = X_train.sample(n=params["sample_rows"], random_state=params["seed"])
-    y_train = X_train.pop("label")
-    X_val = pd.read_parquet("data/prepared/val.parquet", columns=COLUMNS + ["label"],
-                            dtype_backend="pyarrow")
-    y_val = X_val.pop("label")
-
+    # Fit on a random sample of the 9.8M training flights, then free it before loading the
+    # 3.5M validation flights: the runner VM has 4 GB. Each flight gets the delay rates from
+    # the offline feature store, as they were before its date
+    train = load_flights("train").sample(n=params["sample_rows"], random_state=params["seed"])
+    train = add_offline_features(train)
+    train_rows = len(train)
     model = build_model(params["model"], params["seed"])
-    model.fit(X_train, y_train)
-    y_pred = model.predict(X_val)
+    model.fit(train[COLUMNS], train.label)
+    del train
+
+    val = add_offline_features(load_flights("val"))
+    X_val, y_val = val[COLUMNS], val.label
+    # In chunks of 500k flights, which keeps memory low too
+    y_pred = np.concatenate([model.predict(X_val[start:start + 500_000])
+                             for start in range(0, len(X_val), 500_000)])
     metrics = evaluate(y_val, y_pred)
     print(json.dumps(metrics, indent=2))
 
     mlflow.set_experiment(MODEL_NAME)
     with mlflow.start_run(run_name=params["model"]):
-        mlflow.log_params({**params, "train_rows": len(y_train), "val_rows": len(y_val)})
+        mlflow.log_params({**params, "train_rows": train_rows, "val_rows": len(y_val)})
         mlflow.set_tag("data_md5", data_md5())
         mlflow.log_metrics(metrics)
         confusion = pd.crosstab(y_val, y_pred, rownames=["true"], colnames=["predicted"])
