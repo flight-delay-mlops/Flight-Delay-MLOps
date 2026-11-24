@@ -5,7 +5,8 @@ registered in MLflow. This is the endpoint the centralized evaluation calls.
 
 | File | What it holds |
 |---|---|
-| [main.py](main.py) | The app: loads the model at startup, `GET /health`, `POST /classify` |
+| [main.py](main.py) | The app: loads the model at startup, `GET /health`, `POST /classify`, `POST /labels` |
+| [live.py](live.py) | Keeps each leaderboard request and its true labels in SQLite (`live.db`), and scores them |
 | [schemas.py](schemas.py) | Request and response shapes (the 14 BTS columns of a flight) |
 | [errors.py](errors.py) | Error responses (422, 503, 500), all as `{"detail": ...}` |
 | [requirements.txt](requirements.txt) | The API's packages, same versions as training |
@@ -40,6 +41,18 @@ may send complete BTS rows) and missing ones count as null.
 | 503 | The app is up but no model is loaded (e.g. MLflow was unreachable at startup) |
 | 500 | Anything unexpected; no internal details are returned, the traceback is in the server log |
 
+The leaderboard also sends a `request_id` and a `mode` (`"live"` or `"sandbox"`). When there
+is a `request_id`, the flights and our predictions are saved in `live.db` until the labels come.
+
+**`POST /labels`**: the leaderboard sends the true labels of an earlier request, a few hours
+later (right away for the sandbox). They are joined to our predictions by `request_id`, and the
+request's accuracy and macro-F1 go into `live.db` and the log. Always answers 200, since
+anything else counts as a failed delivery.
+
+```json
+{"request_id": "6f1c…", "mode": "live", "labels": ["on_time", "..."], "outcomes": [{"ARR_DELAY": -11.0, "...": "..."}]}
+```
+
 FastAPI also serves interactive docs at `/docs` while the app runs.
 
 ## Configuration
@@ -51,6 +64,7 @@ Environment variables, read at startup:
 | `MODEL_URI` | `models:/flight-delay@production` | Model to serve: the version the `@production` alias points to |
 | `MLFLOW_TRACKING_URI` | – | MLflow server, `http://10.17.0.167:5000` |
 | `MLFLOW_TRACKING_USERNAME`, `MLFLOW_TRACKING_PASSWORD` | – | MLflow login |
+| `DATA_DIR` | `/data` in the image, `.` otherwise | Folder for `live.db`; on VM2 the Docker volume `flight-delay-data` |
 
 The model is loaded **once, at startup**. If loading fails the app still starts and
 answers 503, so `/health` shows what's wrong. After moving `@production` to another
