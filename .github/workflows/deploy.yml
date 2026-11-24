@@ -68,11 +68,13 @@ jobs:
 
       - name: Start the new version
         # Replaces the old container (a few seconds without service). --restart brings the
-        # API back after a crash or a VM reboot
+        # API back after a crash or a VM reboot. The flight-delay-data volume keeps what the
+        # leaderboard sent us (/data/live.db) across redeploys
         run: |
           docker rm -f "$CONTAINER" 2>/dev/null || true
           docker run -d --name "$CONTAINER" --restart unless-stopped -p "$PORT:8000" \
             -e MODEL_URI -e MLFLOW_TRACKING_URI -e MLFLOW_TRACKING_USERNAME -e MLFLOW_TRACKING_PASSWORD \
+            -v flight-delay-data:/data \
             "$IMAGE:$TAG"
 
       - name: Check it works
@@ -107,6 +109,7 @@ jobs:
           docker rm -f "$CONTAINER" 2>/dev/null || true
           docker run -d --name "$CONTAINER" --restart unless-stopped -p "$PORT:8000" \
             -e MODEL_URI -e MLFLOW_TRACKING_URI -e MLFLOW_TRACKING_USERNAME -e MLFLOW_TRACKING_PASSWORD \
+            -v flight-delay-data:/data \
             "$PREVIOUS"
           echo "::warning::Deployment failed, rolled back to $PREVIOUS"
 

@@ -4,6 +4,7 @@ pyyaml==6.0.3
 dvc[ssh]==3.67.1
 scikit-learn==1.7.2
 mlflow==3.17.1
+feast==0.68.0
 python-dotenv==1.1.1
 
 # The decision tree and forest of src/models.py; tensorflow-probability needs tf-keras

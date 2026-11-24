@@ -3,6 +3,7 @@ from unittest.mock import Mock
 from mlflow.exceptions import MlflowException
 from mlflow.protos.databricks_pb2 import INVALID_PARAMETER_VALUE
 
+from api.features import FEATURES
 from api.main import app
 from api.schemas import Flight
 
@@ -24,14 +25,14 @@ def test_classify_answers_one_label_per_flight_in_order(client):
     assert response.json() == {"classifications": labels}
 
 
-def test_classify_gives_the_model_a_row_per_flight_with_every_field(client):
+def test_classify_gives_the_model_every_field_plus_the_feature_store_rates(client):
     payload = {"instances": [{"ORIGIN": "AAA"}, {"ORIGIN": "BBB"}]}
 
     _, model = classify_with(client, ["on_time", "on_time"], payload)
 
     (frame,) = model.predict.call_args.args
     assert list(frame.ORIGIN) == ["AAA", "BBB"]
-    assert list(frame.columns) == list(Flight.model_fields)
+    assert list(frame.columns) == list(Flight.model_fields) + ["ROUTE"] + FEATURES
 
 
 def test_classify_ignores_unknown_fields(client):

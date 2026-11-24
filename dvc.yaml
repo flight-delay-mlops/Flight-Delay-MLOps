@@ -8,6 +8,14 @@ stages:
       - prepare
     outs:
       - data/prepared
+  features:
+    cmd: python -m src.features
+    deps:
+      - src/features.py
+      - api/features.py
+      - data/raw
+    outs:
+      - data/features
   train:
     cmd: python -m src.train
     deps:
@@ -15,6 +23,9 @@ stages:
       - src/models.py
       - src/fdt.py
       - src/forest.py
+      - src/features.py
+      - api/features.py
       - data/prepared
+      - data/features
     params:
       - train

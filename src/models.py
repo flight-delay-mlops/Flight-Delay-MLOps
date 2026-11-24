@@ -10,9 +10,12 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
-# Columns the models use, all raw BTS fields that the API receives
+from api.features import FEATURES
+
+# Columns the models use: raw BTS fields that the API receives, plus the delay rates
+# of the flight's airport, airline and route from the feature store (api/features.py)
 CATEGORIES = ["OP_UNIQUE_CARRIER", "ORIGIN", "DEST", "DEP_TIME_BLK"]
-NUMBERS = ["DISTANCE"]
+NUMBERS = ["DISTANCE"] + FEATURES
 COLUMNS = CATEGORIES + NUMBERS
 
 
@@ -27,7 +30,8 @@ def build_model(name, seed):
 
     # Logistic regression. The preprocessing is part of the model, so the API sends raw flights:
     # - each category becomes 0/1 columns; one never seen in training (a new airport) is all zeros
-    # - a missing distance becomes the average one, then distances are scaled
+    # - a missing number (distance, or the rates of a key the feature store doesn't know)
+    #   becomes the average one, then numbers are scaled
     if name == "logreg":
         columns = ColumnTransformer([
             ("categories", OneHotEncoder(handle_unknown="ignore"), CATEGORIES),
