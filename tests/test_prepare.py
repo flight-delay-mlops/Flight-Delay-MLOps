@@ -1,17 +1,8 @@
-import numpy as np
 import pandas as pd
 import pytest
 import yaml
 
-from src.prepare import (
-    FEATURES,
-    add_rolling_average,
-    filter_flights,
-    label_delays,
-    main,
-    prepare,
-    split_by_date,
-)
+from src.prepare import FEATURES, filter_flights, label_delays, main, prepare, split_by_date
 
 
 def make_flights(**overrides):
@@ -25,7 +16,6 @@ def make_flights(**overrides):
         CANCELLED=[0.0] * n,
         DIVERTED=[0.0] * n,
         ARR_DELAY=[0.0, 20.0, 90.0],
-        DEP_TIME=[341, 1045, 1750],
     )
     data.update(overrides)
     return pd.DataFrame(data)
@@ -69,7 +59,7 @@ def test_split_by_date_puts_val_start_in_validation():
 
 
 def test_prepare_keeps_only_pre_departure_features_and_label():
-    train, val, _ = prepare(make_flights(), "2023-07-01", '1D', None)
+    train, val = prepare(make_flights(), "2023-07-01")
 
     for part in (train, val):
         assert list(part.columns) == FEATURES + ["label"]
@@ -81,7 +71,7 @@ def test_prepare_keeps_only_pre_departure_features_and_label():
 @pytest.fixture
 def params_path(tmp_path):
     path = tmp_path / "params.yaml"
-    path.write_text(yaml.safe_dump({"prepare": {"val_start": "2023-07-01", "window_length":"1D"}}))
+    path.write_text(yaml.safe_dump({"prepare": {"val_start": "2023-07-01"}}))
     return path
 
 
@@ -107,23 +97,3 @@ def test_main_writes_train_and_val_parquet(tmp_path, params_path):
 def test_main_fails_clearly_without_raw_files(tmp_path, params_path):
     with pytest.raises(FileNotFoundError):
         main(raw_dir=tmp_path / "missing", out_dir=tmp_path / "out", params_path=params_path)
-
-def test_add_rolling_window():
-    df1 = make_flights(
-        FL_DATE=["2022-01-31"]*3,
-        DEP_TIME=[451, 1125, 2345],
-        ORIGIN=["LAN", "LAN", "IAD",],
-        ARR_DELAY=[-17.0, 27.0, 2.0],
-    )
-    df2 = make_flights(
-        FL_DATE=["2022-02-01"]*3,
-        DEP_TIME=[231, 907, 1830],
-        ORIGIN=["LAN", "IAD", "IAD"],
-        ARR_DELAY=[-10.0, 30.0, -5.0]
-    )
-    df1, lastWindow = add_rolling_average(df1, '1D', None)
-    assert lastWindow.shape[0] == 3
-    assert (df1.ROL_AVG.values == np.array([-17.0, 5.0, 2.0])).all()
-
-    df2, lastWindow = add_rolling_average(df2, '1D', lastWindow)
-    assert (df2.ROL_AVG == np.array([0.0, 16.0, 9.0])).all()

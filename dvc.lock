@@ -10,38 +10,32 @@ stages:
       nfiles: 24
     - path: src/prepare.py
       hash: md5
-      md5: 9b78179b10db31c8a0b277d2d1f42523
-      size: 4912
+      md5: 344a97cf969798380c9885982e6dab17
+      size: 3203
     params:
       params.yaml:
         prepare:
           val_start: '2023-07-01'
-          window_length: 1D
     outs:
     - path: data/prepared
       hash: md5
-      md5: 427f57d6e8226eb7dfd9939a12deac52.dir
-      size: 202727949
+      md5: c473239607601231199f395bd8421eba.dir
+      size: 125025830
       nfiles: 2
   train:
     cmd: python -m src.train
     deps:
     - path: data/prepared
       hash: md5
-      md5: 427f57d6e8226eb7dfd9939a12deac52.dir
-      size: 202727949
+      md5: c473239607601231199f395bd8421eba.dir
+      size: 125025830
       nfiles: 2
-    - path: src/models.py
-      hash: md5
-      md5: 31b8e45c7e7df068019b5c7624c6af03
-      size: 1797
     - path: src/train.py
       hash: md5
-      md5: 97531659c120c7ee6edc667374d1f80f
-      size: 4246
+      md5: 3576d7545b9833d826428658015624c9
+      size: 3002
     params:
       params.yaml:
         train:
-          model: logreg
-          sample_rows: 1000000
+          strategy: most_frequent
           seed: 42
