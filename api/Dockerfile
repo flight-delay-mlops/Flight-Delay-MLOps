@@ -21,6 +21,9 @@ COPY api/ api/
 
 # Run as a normal user, not root
 RUN useradd --create-home --uid 1000 api
+# Where the API keeps what the leaderboard sends (api/live.py); a Docker volume on VM2
+RUN mkdir /data && chown api /data
+ENV DATA_DIR=/data
 USER api
 
 EXPOSE 8000
@@ -34,4 +37,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
 #   MODEL_URI                    model to serve (default models:/flight-delay@production)
 #   MLFLOW_TRACKING_URI          MLflow server to load it from
 #   MLFLOW_TRACKING_USERNAME/PASSWORD  MLflow login
+#   DATA_DIR                     folder for live.db (default /data)
 CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
