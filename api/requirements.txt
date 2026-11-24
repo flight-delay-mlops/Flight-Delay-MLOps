@@ -7,3 +7,6 @@ pandas==2.3.3
 scikit-learn==1.7.2
 mlflow==3.17.1
 feast==0.68.0
+tensorflow==2.21.0
+tensorflow-probability==0.25.0
+tf-keras==2.21.0

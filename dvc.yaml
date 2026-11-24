@@ -21,6 +21,8 @@ stages:
     deps:
       - src/train.py
       - src/models.py
+      - src/fdt.py
+      - src/forest.py
       - src/features.py
       - api/features.py
       - data/prepared

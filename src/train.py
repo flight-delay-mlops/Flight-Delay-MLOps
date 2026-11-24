@@ -17,6 +17,10 @@ from src.prepare import LABELS
 
 MODEL_NAME = "flight-delay"
 
+# MLflow saves the model with skops, which only loads types it was told are safe: the numpy
+# dtype that the one-hot encoder stores, and the class that wraps the TensorFlow trees
+SKOPS_TRUSTED_TYPES = ["numpy.dtype", "src.models.TensorFlowTrees"]
+
 
 def evaluate(y_true, y_pred):
     # Macro-F1 weighs the three classes equally, so a model that ignores
@@ -83,11 +87,12 @@ def main():
         mlflow.log_metrics(metrics)
         confusion = pd.crosstab(y_val, y_pred, rownames=["true"], colnames=["predicted"])
         mlflow.log_text(confusion.to_csv(), "confusion_matrix.csv")
-        # MLflow saves the model with skops, which only loads types it was told are safe.
-        # The one-hot encoder stores a numpy dtype, so that type is declared here
+        # code_paths: the saved model carries src/ with it. The TensorFlow trees need fdt.py and
+        # forest.py to load, and the API image only has api/
         info = mlflow.sklearn.log_model(model, name="model", registered_model_name=MODEL_NAME,
                                         input_example=X_val.head(),
-                                        skops_trusted_types=["numpy.dtype"])
+                                        skops_trusted_types=SKOPS_TRUSTED_TYPES,
+                                        code_paths=["src"])
 
     # Quality gate: the new model only becomes the candidate (@staging) if it beats the model
     # in production on the validation set. Every version stays in the registry, tagged with
