@@ -5,6 +5,7 @@
 | **IP** | `10.17.0.156` (VM2, on the DEI network or DEI-VPN) |
 | **Port** | `8000` |
 | **Classification** | `POST http://10.17.0.156:8000/classify` |
+| **True labels** (sent by the leaderboard) | `POST http://10.17.0.156:8000/labels` |
 | **Health check** | `GET http://10.17.0.156:8000/health` |
 | **Interactive docs** | `http://10.17.0.156:8000/docs` |
 

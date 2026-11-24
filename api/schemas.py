@@ -35,6 +35,10 @@ class Flight(BaseModel):
 class ClassifyRequest(BaseModel):
     """Body of POST /classify: the flights to classify."""
 
+    # Sent by the leaderboard: the id comes back with the true labels, and mode is
+    # "live" (scored) or "sandbox" (January 2024 test traffic, never scored)
+    request_id: str | None = None
+    mode: str | None = None
     instances: list[Flight] = Field(min_length=1)
 
     def to_dataframe(self):
@@ -49,3 +53,13 @@ class ClassifyResponse(BaseModel):
     """Answer of POST /classify: one label per flight, in the order received."""
 
     classifications: list[Label]
+
+
+class LabelsRequest(BaseModel):
+    """Body of POST /labels: the true labels of an earlier /classify request."""
+
+    request_id: str | None = None
+    mode: str | None = None
+    labels: list[str] = []
+    # What actually happened to each flight (ARR_DELAY, DEP_DELAY...), in the same order
+    outcomes: list[dict | None] = []
