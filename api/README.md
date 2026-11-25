@@ -63,8 +63,9 @@ The model also uses how late flights of the flight's origin airport, airline and
 15+ min late. These are defined once, in [features.py](features.py), and kept in two places:
 
 - **Offline**, for training: `src/features.py` (DVC stage `features`) computes, for every key
-  and day of 2022-2023, the rates of the 30 days *before* that day. Training looks each
-  flight up by key and date, so its features never include its own delay or anything later.
+  and day of 2022-2023, the rates of the 30 days *before* that day. Training asks
+  Feast for each flight's rates as they were on its date (`get_historical_features`, run by
+  DuckDB), so its features never include its own delay or anything later.
 - **Online**, for serving: a [Feast](https://feast.dev) store (two SQLite files in
   `DATA_DIR/feature_store`). `/classify` reads the latest rates of each flight's keys; keys
   it knows nothing about get none, and the model fills in average values. `/labels` (live

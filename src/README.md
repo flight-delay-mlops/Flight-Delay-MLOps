@@ -23,6 +23,10 @@ All known before departure:
 
 The encoding is part of the saved model, so the API applies exactly the same one.
 
+Both sides use the same [Feast](https://feast.dev) definitions (`api/features.py`). Training
+gets the delay rates from its historical features and the API from its online store
+([api/README.md](../api/README.md#feature-store)).
+
 ## The forest
 
 `decision_forest` is five soft, oblique decision trees of depth 5 (`decision_tree` is one of

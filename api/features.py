@@ -2,7 +2,8 @@
 
 The same features exist in two places, defined once here:
   - offline (src/features.py, a DVC stage): for each day, the rates of the 30 days before it,
-    from the 2022-2023 data. Training uses these, so a flight never sees its own delay.
+    from the 2022-2023 data. Training asks Feast for these as they were on each flight's date,
+    so a flight never sees its own delay.
   - online (Feast, SQLite files in DATA_DIR/feature_store): the latest rates of each key, read by
     /classify. They are filled from the true outcomes the leaderboard sends to /labels (live mode
     only), so they follow the 2024 flights we are asked about.
@@ -32,11 +33,17 @@ def rates(counts, key):
                          f"{key}_delayed_share": counts.delayed / counts.flights})
 
 
-def feast_definitions(key):
-    # Feast's description of one key: who it is (entity) and which features it has (view)
+def feature_names(key):
+    # How Feast calls the features of a key
+    return [f"{key.lower()}_delays:{name}" for name in FEATURES if name.startswith(key + "_")]
+
+
+def feast_definitions(key, ttl=None):
+    # Feast's description of one key: who it is (entity) and which features it has (view).
+    # ttl: how old the rates may be when looking up the past; serving has no limit
     entity = Entity(name=key.lower(), join_keys=[key], value_type=ValueType.STRING)
     view = FeatureView(
-        name=f"{key.lower()}_delays", entities=[entity],
+        name=f"{key.lower()}_delays", entities=[entity], ttl=ttl,
         schema=[Field(name=name, dtype=Float64) for name in FEATURES if name.startswith(key + "_")],
         source=FileSource(path=f"data/features/{key}.parquet", timestamp_field="FL_DATE"),
     )
@@ -65,8 +72,7 @@ def add_online_features(flights):
     # /classify: each flight gets the latest rates of its keys; keys we know nothing about get None
     flights = add_route(flights).reset_index(drop=True)
     found = open_store(store_folder()).get_online_features(
-        features=[f"{key.lower()}_delays:{name}" for key in KEYS for name in FEATURES
-                  if name.startswith(key + "_")],
+        features=[name for key in KEYS for name in feature_names(key)],
         entity_rows=flights[KEYS].astype(str).to_dict("records"),
     ).to_df()
     return pd.concat([flights, found[FEATURES].astype(float)], axis=1)
