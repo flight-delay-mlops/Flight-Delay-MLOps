@@ -1,5 +1,5 @@
 pandas==2.3.3
-pyarrow==21.0.0
+pyarrow==25.0.0
 pyyaml==6.0.3
 dvc[ssh]==3.67.1
 scikit-learn==1.7.2

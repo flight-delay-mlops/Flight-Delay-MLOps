@@ -1,6 +1,10 @@
 prepare:
   val_start: '2023-07-01'  # flights from this date on go to validation
 train:
-  model: logreg            # a model from src/models.py: logreg, decision_tree, decision_forest, most_frequent or stratified
+  model: decision_forest            # a model from src/models.py: logreg, decision_tree, decision_forest, most_frequent or stratified
+  imbalance: gradient_weights  # what corrects for the rare classes: gradient_weights or decision_weights (src/README.md)
+  class_weight_power: 0.6  # gradient_weights: 0 = no weights, 1 = the three classes count the same
+  tune_start: '2023-04-01' # decision_weights: training flights from this date on only tune them
+  tune_rows: 200000        # decision_weights: flights sampled at random to tune them
   sample_rows: 1000000     # training flights sampled at random (all 9.8M don't fit in the runner's memory)
   seed: 42                 # makes the sample and the random baseline reproducible

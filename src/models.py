@@ -1,5 +1,8 @@
 # The models train.py can train, picked by name in params.yaml (train.model).
 # This file only says what each model is; train.py fits, evaluates and logs them all the same way.
+# How the forest and its class weights work is explained in src/README.md.
+from itertools import product
+
 import numpy as np
 from scipy.sparse import issparse
 from sklearn.base import BaseEstimator, ClassifierMixin
@@ -19,7 +22,11 @@ NUMBERS = ["DISTANCE"] + FEATURES
 COLUMNS = CATEGORIES + NUMBERS
 
 
-def build_model(name, seed):
+# Reference models with no tuning at all
+BASELINES = ("most_frequent", "stratified")
+
+
+def build_model(name, seed, class_weight_power=0.0):
     # Baseline: always predicts the most common class (on_time)
     if name == "most_frequent":
         return DummyClassifier(strategy="most_frequent")
@@ -48,7 +55,8 @@ def build_model(name, seed):
             ("numbers", make_pipeline(SimpleImputer(), StandardScaler()), NUMBERS),
         ])
         trees, depth = (1, 6) if name == "decision_tree" else (5, 5)
-        return make_pipeline(columns, TensorFlowTrees(trees=trees, depth=depth, seed=seed))
+        return make_pipeline(columns, TensorFlowTrees(trees=trees, depth=depth, seed=seed,
+                                                      class_weight_power=class_weight_power))
 
     raise ValueError(f"unknown model {name!r} in params.yaml")
 
@@ -60,13 +68,15 @@ class TensorFlowTrees(ClassifierMixin, BaseEstimator):
     so MLflow can save this estimator like any scikit-learn one.
     """
 
-    def __init__(self, trees=1, depth=6, epochs=3, batch_size=1024, learning_rate=0.01, seed=42):
+    def __init__(self, trees=1, depth=6, epochs=3, batch_size=1024, learning_rate=0.01, seed=42,
+                 class_weight_power=0.0):
         self.trees = trees
         self.depth = depth
         self.epochs = epochs
         self.batch_size = batch_size
         self.learning_rate = learning_rate
         self.seed = seed
+        self.class_weight_power = class_weight_power
 
     def fit(self, X, y):
         # Imported here so the other models don't pay for loading TensorFlow
@@ -75,9 +85,10 @@ class TensorFlowTrees(ClassifierMixin, BaseEstimator):
         tf.keras.utils.set_random_seed(self.seed)
         self.classes_, labels = np.unique(np.asarray(y), return_inverse=True)
         self.n_features_in_ = X.shape[1]
-        # balanced: the rare delay classes count as much as on_time, which is what macro-F1 rewards
-        counts = np.bincount(labels)
-        sample_weights = (len(labels) / (len(counts) * counts))[labels].astype("float32")
+        # Each flight's gradient is multiplied by the weight of its class: the rarer the class,
+        # the larger the weight. Power 0 is no weights, 1 makes the classes count the same
+        weights = (len(labels) / np.bincount(labels)) ** self.class_weight_power
+        flight_weights = weights[labels].astype("float32")
 
         model = self._new_model()
         optimizer = tf.keras.optimizers.Adam(self.learning_rate)
@@ -97,7 +108,7 @@ class TensorFlowTrees(ClassifierMixin, BaseEstimator):
             order = rng.permutation(len(labels))
             for start in range(0, len(order), self.batch_size):
                 rows = order[start:start + self.batch_size]
-                train_step(_dense(X[rows]), labels[rows], sample_weights[rows])
+                train_step(_dense(X[rows]), labels[rows], flight_weights[rows])
 
         self.weights_ = [variable.numpy() for variable in model.variables]
         return self
@@ -117,13 +128,54 @@ class TensorFlowTrees(ClassifierMixin, BaseEstimator):
         from src.fdt import FairDecisionTree
         from src.forest import FairDecisionForest
 
-        # compute_mode "log": the forest's default mode applies the softmax twice, which
-        # flattens the probabilities (the top one stayed near 0.57, against 0.98 here)
+        # compute_mode "log": sums logs instead of multiplying many small node probabilities
         if self.trees == 1:
             return FairDecisionTree(self.n_features_in_, self.depth, len(self.classes_),
                                     compute_mode="log")
         return FairDecisionForest(self.trees, self.n_features_in_, self.depth,
                                   len(self.classes_), compute_mode="log")
+
+
+class WeightedDecision(ClassifierMixin, BaseEstimator):
+    """A fitted classifier that picks the class with the highest probability x weight.
+
+    fit() only tunes the weights, on flights the classifier was not trained on: it keeps the
+    combination with the best macro-F1. The reference class (on_time) always has weight 1.
+    """
+
+    def __init__(self, classifier, reference="on_time"):
+        self.classifier = classifier
+        self.reference = reference
+
+    def fit(self, X, y):
+        self.classes_ = self.classifier.classes_
+        probabilities = self.classifier.predict_proba(X)
+        labels = np.searchsorted(self.classes_, np.asarray(y))
+        options = [[1.0] if name == self.reference else np.geomspace(0.5, 20, 41)
+                   for name in self.classes_]
+        self.weights_ = np.ones(len(self.classes_))
+        best = _macro_f1(labels, probabilities.argmax(axis=1), len(self.classes_))
+        for weights in product(*options):
+            score = _macro_f1(labels, (probabilities * weights).argmax(axis=1),
+                              len(self.classes_))
+            if score > best:
+                best, self.weights_ = score, np.array(weights)
+        return self
+
+    def predict_proba(self, X):
+        # The classifier's own probabilities: the weights only change which class is picked
+        return self.classifier.predict_proba(X)
+
+    def predict(self, X):
+        return self.classes_[(self.predict_proba(X) * self.weights_).argmax(axis=1)]
+
+
+def _macro_f1(labels, predicted, n_classes):
+    # Same as scikit-learn's macro F1, but fast enough to try thousands of weights
+    counts = np.bincount(n_classes * labels + predicted,
+                         minlength=n_classes ** 2).reshape(n_classes, n_classes)
+    totals = counts.sum(axis=0) + counts.sum(axis=1)
+    return np.mean(2 * np.diag(counts) / np.maximum(totals, 1))
 
 
 def _dense(rows):

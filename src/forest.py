@@ -38,13 +38,15 @@ class FairDecisionForest(tf.Module):
     all_predictions = []
     all_node_decisions = []
     for layer in self.layers:
-      # Always training=True: only that mode returns the tree's raw prediction, which the
-      # forest averages and then passes through the softmax below
+      # Always training=True: only that mode returns the tree's class
+      # log-probabilities, which the forest averages as probabilities below
       prediction, node_decisions, _ = layer(inputs, training=True)
       all_predictions.append(prediction)
       all_node_decisions.append(node_decisions)
 
-    final_prediction = tf.reduce_mean(tf.stack(all_predictions), axis=0)
+    # log of the mean of the trees' probabilities
+    final_prediction = (tf.reduce_logsumexp(tf.stack(all_predictions), axis=0)
+                        - tf.math.log(float(len(self.layers))))
     all_node_decisions = tf.stack(all_node_decisions, axis=0)
     if training:
       return final_prediction, all_node_decisions
