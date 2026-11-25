@@ -118,19 +118,22 @@ class FairDecisionTree(tf.Module):
 
       # axis=1 because it corresponds to internal nodes
       leaf_probs = tf.math.reduce_sum(probs, axis=1)
-      theta = tf.expand_dims(self.theta, axis=0)
-
-      prediction = tf.math.exp(tf.expand_dims(leaf_probs, axis=2) + theta)
-      prediction = tf.reduce_sum(prediction, axis=1)
+      # log of the sum over leaves of P(leaf) * P(class | leaf)
+      theta = tf.expand_dims(tf.nn.log_softmax(self.theta, axis=-1), axis=0)
+      prediction = tf.reduce_logsumexp(
+          tf.expand_dims(leaf_probs, axis=2) + theta, axis=1)
 
       leaf_probs = tf.math.exp(leaf_probs)
     else:
       leaf_probs = tf.math.reduce_prod(probs, axis=1)
       if pred_type == 'categorical':
-          prediction = tf.matmul(leaf_probs, tf.nn.softmax(self.theta, axis=-1))
+          prediction = tf.math.log(
+              tf.matmul(leaf_probs, tf.nn.softmax(self.theta, axis=-1)) + 1e-8)
       else:
           prediction = tf.matmul(leaf_probs, self.theta)
 
+    # A categorical prediction is in log-probabilities, so both a cross-entropy on logits and
+    # the softmax below use exactly the tree's class probabilities: softmax(log p) = p
     if training:
       return prediction, raw_node_decisions, leaf_probs
     return tf.nn.softmax(prediction, axis=-1)

@@ -63,14 +63,22 @@ The model also uses how late flights of the flight's origin airport, airline and
 15+ min late. These are defined once, in [features.py](features.py), and kept in two places:
 
 - **Offline**, for training: `src/features.py` (DVC stage `features`) computes, for every key
-  and day of 2022-2023, the rates of the 30 days *before* that day. Training looks each
-  flight up by key and date, so its features never include its own delay or anything later.
+  and day of 2022-2023, the rates of the 30 days *before* that day. Training asks
+  Feast for each flight's rates as they were on its date (`get_historical_features`, run by
+  DuckDB), so its features never include its own delay or anything later.
 - **Online**, for serving: a [Feast](https://feast.dev) store (two SQLite files in
   `DATA_DIR/feature_store`). `/classify` reads the latest rates of each flight's keys; keys
-  it knows nothing about get none, and the model fills in average values. `/labels` (live
-  mode only) adds the true delays to daily counts and writes the new 30-day rates, so the
-  online values follow the 2024 flights we are asked about. Sandbox (January) outcomes are
+  it knows nothing about get none, and the model fills in average values. At startup the API
+  fills it with the **base rates**: those of the last 30 days of the 2022-2023 data, which
+  training logs in the model's MLflow run (`base_rates.parquet`). `/labels` (live mode only)
+  adds the true delays to daily counts and writes the new 30-day rates, so the online values
+  follow the 2024 flights we are asked about. Sandbox (January) outcomes are
   left out, and a request's outcomes are only counted once, even if delivered again.
+
+The base rates are added to the live counts as if they were up to 50 more flights: with few live
+flights a rate stays near its base, with many it follows the live ones. A key that isn't in the
+base data starts from the average rate. Without base rates (a model trained before they existed)
+the API still works, with live rates only.
 
 Only outcomes the leaderboard has already sent are used, all from earlier days than the
 flights being classified.

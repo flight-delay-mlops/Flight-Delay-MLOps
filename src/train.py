@@ -11,15 +11,19 @@ from mlflow import MlflowClient
 from mlflow.exceptions import MlflowException
 from sklearn.metrics import accuracy_score, f1_score
 
-from src.features import add_offline_features
-from src.models import CATEGORIES, COLUMNS, build_model
+from src.features import BASE_PATH, add_offline_features
+from src.models import BASELINES, CATEGORIES, COLUMNS, WeightedDecision, build_model
 from src.prepare import LABELS
 
 MODEL_NAME = "flight-delay"
 
+# The two ways to deal with the rare delay classes (src/README.md)
+IMBALANCE = ("gradient_weights", "decision_weights")
+
 # MLflow saves the model with skops, which only loads types it was told are safe: the numpy
-# dtype that the one-hot encoder stores, and the class that wraps the TensorFlow trees
-SKOPS_TRUSTED_TYPES = ["numpy.dtype", "src.models.TensorFlowTrees"]
+# dtype that the one-hot encoder stores, the TensorFlow trees and the decision weights
+SKOPS_TRUSTED_TYPES = ["numpy.dtype", "src.models.TensorFlowTrees",
+                       "src.models.WeightedDecision"]
 
 
 def evaluate(y_true, y_pred):
@@ -48,6 +52,29 @@ def load_flights(split):
                            columns=CATEGORIES + ["DISTANCE", "FL_DATE", "label"])
 
 
+def split_for_tuning(flights, params):
+    # The last months of the training data choose the decision weights, so the model is fitted
+    # only on flights before them. The validation set stays out of it: it feeds the quality gate
+    is_tune = pd.to_datetime(flights.FL_DATE) >= params["tune_start"]
+    fit, tune = flights[~is_tune], flights[is_tune]
+    return (fit.sample(n=params["sample_rows"], random_state=params["seed"]),
+            tune.sample(n=params["tune_rows"], random_state=params["seed"]))
+
+
+def choose_flights(flights, params):
+    # Flights to fit the model on, and to tune the decision weights on (None if not used).
+    # Weighted gradients need no tuning flights, so the model can learn from all the months
+    if params["imbalance"] == "decision_weights" and params["model"] not in BASELINES:
+        return split_for_tuning(flights, params)
+    return flights.sample(n=params["sample_rows"], random_state=params["seed"]), None
+
+
+def predict_proba(model, X):
+    # In chunks of 500k flights, which keeps memory low
+    return np.concatenate([model.predict_proba(X[start:start + 500_000])
+                           for start in range(0, len(X), 500_000)])
+
+
 def production_macro_f1(client):
     # Macro-F1 of the model the API serves now, or None before anything was promoted
     try:
@@ -62,22 +89,35 @@ def main():
     with open("params.yaml") as f:
         params = yaml.safe_load(f)["train"]
 
-    # Fit on a random sample of the 9.8M training flights, then free it before loading the
+    # Fit on a random sample of the training flights, then free it before loading the
     # 3.5M validation flights: the runner VM has 4 GB. Each flight gets the delay rates from
     # the offline feature store, as they were before its date
-    train = load_flights("train").sample(n=params["sample_rows"], random_state=params["seed"])
+    if params["imbalance"] not in IMBALANCE:
+        raise ValueError(f"unknown imbalance {params['imbalance']!r} in params.yaml")
+    train, tune = choose_flights(load_flights("train"), params)
     train = add_offline_features(train)
     train_rows = len(train)
-    model = build_model(params["model"], params["seed"])
+    power = params["class_weight_power"] if params["imbalance"] == "gradient_weights" else 0.0
+    model = build_model(params["model"], params["seed"], power)
     model.fit(train[COLUMNS], train.label)
     del train
+    if tune is not None:
+        tune = add_offline_features(tune)
+        model = WeightedDecision(model).fit(tune[COLUMNS], tune.label)
+    del tune
 
     val = add_offline_features(load_flights("val"))
     X_val, y_val = val[COLUMNS], val.label
-    # In chunks of 500k flights, which keeps memory low too
-    y_pred = np.concatenate([model.predict(X_val[start:start + 500_000])
-                             for start in range(0, len(X_val), 500_000)])
+    probabilities = predict_proba(model, X_val)
+    y_pred = model.classes_[probabilities.argmax(axis=1)]
     metrics = evaluate(y_val, y_pred)
+    if isinstance(model, WeightedDecision):
+        # The untuned score shows how much the decision weights are worth
+        untuned = metrics["macro_f1"]
+        y_pred = model.classes_[(probabilities * model.weights_).argmax(axis=1)]
+        metrics = {**evaluate(y_val, y_pred), "macro_f1_untuned": untuned}
+        for label, weight in zip(model.classes_, model.weights_):
+            metrics[f"decision_weight_{label}"] = weight
     print(json.dumps(metrics, indent=2))
 
     mlflow.set_experiment(MODEL_NAME)
@@ -87,6 +127,8 @@ def main():
         mlflow.log_metrics(metrics)
         confusion = pd.crosstab(y_val, y_pred, rownames=["true"], colnames=["predicted"])
         mlflow.log_text(confusion.to_csv(), "confusion_matrix.csv")
+        # Where the API's feature store starts from; it downloads it with the model
+        mlflow.log_artifact(BASE_PATH)
         # code_paths: the saved model carries src/ with it. The TensorFlow trees need fdt.py and
         # forest.py to load, and the API image only has api/
         info = mlflow.sklearn.log_model(model, name="model", registered_model_name=MODEL_NAME,

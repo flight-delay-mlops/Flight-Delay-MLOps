@@ -39,3 +39,25 @@ stages:
         train:
           strategy: most_frequent
           seed: 42
+  features:
+    cmd: python -m src.features
+    deps:
+    - path: api/features.py
+      hash: md5
+      md5: 717199308ac42debd305f31f8ef23538
+      size: 5118
+    - path: data/raw
+      hash: md5
+      md5: 45a8ef1f51810686209c5bd373d5f641.dir
+      size: 252879660
+      nfiles: 24
+    - path: src/features.py
+      hash: md5
+      md5: f23b56bcfc8e5da4cec514cc03b638ad
+      size: 2680
+    outs:
+    - path: data/features
+      hash: md5
+      md5: e3359c6a788ee02200247252be7becd0.dir
+      size: 32285726
+      nfiles: 3
