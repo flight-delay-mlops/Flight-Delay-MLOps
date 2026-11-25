@@ -1,7 +1,8 @@
 import pandas as pd
+import pytest
 
 from api import features
-from src.features import add_offline_features
+from src.features import add_offline_features, base_counts
 
 
 def test_offline_rates_only_use_days_before_the_flight(tmp_path, monkeypatch):
@@ -56,3 +57,50 @@ def test_offline_rates_keep_repeated_flights_and_ignore_the_future(tmp_path, mon
     assert looked_up.ORIGIN_avg_delay[:3].tolist() == [20.0, 20.0, 10.0]
     assert pd.isna(looked_up.ORIGIN_avg_delay[3])
     assert looked_up.OP_UNIQUE_CARRIER_delayed_share.tolist() == [0.2, 0.2, 0.1, 0.2]
+
+
+@pytest.fixture
+def base_rates(monkeypatch, tmp_path):
+    # 100 flights of JFK, AA and JFK-LAX, averaging 20 min late, and 25% of them 15+ min late
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    path = tmp_path / "base_rates.parquet"
+    pd.DataFrame([{"key": key, "value": value, "flights": 100, "delay": 2000.0, "delayed": 25}
+                  for key, value in [("ORIGIN", "JFK"), ("OP_UNIQUE_CARRIER", "AA"),
+                                     ("ROUTE", "JFK-LAX")]]).to_parquet(path)
+    monkeypatch.setattr(features.mlflow.artifacts, "download_artifacts", lambda **_: str(path))
+    features.load_base_rates("run")
+
+
+FLIGHT = pd.DataFrame({"ORIGIN": ["JFK"], "DEST": ["LAX"], "OP_UNIQUE_CARRIER": ["AA"],
+                       "FL_DATE": ["2024-02-01"]})
+
+
+def test_online_store_starts_from_the_base_rates(base_rates):
+    looked_up = features.add_online_features(FLIGHT)
+
+    assert looked_up.ORIGIN_avg_delay[0] == 20.0
+    assert looked_up.ROUTE_delayed_share[0] == 0.25
+
+
+def test_live_outcomes_are_blended_with_the_base_rates(base_rates):
+    new = FLIGHT.assign(ORIGIN="XXX")
+    flights = pd.concat([FLIGHT, new], ignore_index=True)
+
+    features.learn_outcomes(flights, [{"ARR_DELAY": 122.0}, {"ARR_DELAY": 122.0}])
+    features.load_base_rates("run")  # a restart doesn't add the base a second time
+
+    looked_up = features.add_online_features(flights)
+    # One live flight against 50 base ones; a new airport starts from the average
+    assert looked_up.ORIGIN_avg_delay.tolist() == pytest.approx([22.0, 22.0])
+    assert looked_up.OP_UNIQUE_CARRIER_avg_delay[0] == pytest.approx((50 * 20 + 244) / 52)
+
+
+def test_base_counts_are_the_last_30_days():
+    counts = pd.DataFrame({"ORIGIN": ["JFK"] * 3, "flights": [1, 2, 3], "delay": [1.0, 2.0, 3.0],
+                           "delayed": [0, 1, 1],
+                           "FL_DATE": pd.to_datetime(["2023-12-01", "2023-12-02", "2023-12-31"])})
+
+    base = base_counts(counts, "ORIGIN")
+
+    assert base[["key", "value", "flights", "delay", "delayed"]].values.tolist() == [
+        ["ORIGIN", "JFK", 5, 5.0, 2]]

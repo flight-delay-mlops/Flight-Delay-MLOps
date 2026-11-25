@@ -11,7 +11,7 @@ from mlflow import MlflowClient
 from mlflow.exceptions import MlflowException
 from sklearn.metrics import accuracy_score, f1_score
 
-from src.features import add_offline_features
+from src.features import BASE_PATH, add_offline_features
 from src.models import BASELINES, CATEGORIES, COLUMNS, WeightedDecision, build_model
 from src.prepare import LABELS
 
@@ -127,6 +127,8 @@ def main():
         mlflow.log_metrics(metrics)
         confusion = pd.crosstab(y_val, y_pred, rownames=["true"], colnames=["predicted"])
         mlflow.log_text(confusion.to_csv(), "confusion_matrix.csv")
+        # Where the API's feature store starts from; it downloads it with the model
+        mlflow.log_artifact(BASE_PATH)
         # code_paths: the saved model carries src/ with it. The TensorFlow trees need fdt.py and
         # forest.py to load, and the API image only has api/
         info = mlflow.sklearn.log_model(model, name="model", registered_model_name=MODEL_NAME,

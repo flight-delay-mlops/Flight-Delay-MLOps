@@ -36,6 +36,12 @@ async def lifespan(app):
     except Exception:
         app.state.model = None
         logger.exception("Could not load the model from %s", MODEL_URI)
+    # Without base rates the API still works: the rates then only come from the live labels
+    if app.state.model is not None:
+        try:
+            features.load_base_rates(app.state.model.metadata.run_id)
+        except Exception:
+            logger.exception("Could not load the base rates of the model")
     yield
 
 

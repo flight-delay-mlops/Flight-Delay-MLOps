@@ -161,8 +161,8 @@ chosen on April to June, not on validation.
 
 - The decision weights fit the mix of delays in the tuning months, and the class weights that of
   the training flights. If it changes (e.g. a bad winter), they go out of date: train again.
-- The delay rates come from recent labels. While the API's feature store is empty, the model
-  falls back to the average rates, so it can do worse than in validation.
+- The API's feature store starts from the December 2023 rates and follows the live labels. Until
+  those arrive the rates are old, so it can do worse than in validation.
 - One run with one seed: small differences between models may be noise.
 
 ## Running it

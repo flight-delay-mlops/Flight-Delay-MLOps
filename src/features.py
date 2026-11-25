@@ -12,10 +12,19 @@ import ibis
 import pandas as pd
 from feast import FeatureStore, RepoConfig
 
-from api.features import KEYS, WINDOW_DAYS, add_route, feast_definitions, feature_names, rates
+from api.features import (
+    BASE_RATES,
+    KEYS,
+    WINDOW_DAYS,
+    add_route,
+    feast_definitions,
+    feature_names,
+    rates,
+)
 from src.prepare import filter_flights
 
 OUT_DIR = "data/features"
+BASE_PATH = f"{OUT_DIR}/{BASE_RATES}"
 
 
 def daily_counts(path):
@@ -78,12 +87,21 @@ def historical_rates(store, key, pairs):
                         **{key: found[key].astype(pairs[key].dtype)})
 
 
+def base_counts(counts, key):
+    # Per key, the totals of the last 30 days of the data: where the online store starts from
+    recent = counts[counts.FL_DATE > counts.FL_DATE.max() - pd.Timedelta(days=WINDOW_DAYS)]
+    totals = recent.groupby(key)[["flights", "delay", "delayed"]].sum()
+    return totals.rename_axis("value").reset_index().assign(key=key)
+
+
 def main():
     # One monthly file at a time: memory stays low on the 4 GB runner
     parts = [daily_counts(path) for path in sorted(glob.glob("data/raw/*.csv.gz"))]
     os.makedirs(OUT_DIR, exist_ok=True)
+    base = []
     for key in KEYS:
         counts = pd.concat(part[key] for part in parts).reset_index().sort_values("FL_DATE")
+        base.append(base_counts(counts, key))
         # closed="left": the window ends just before the day, leaving the day itself out
         window = (counts.set_index("FL_DATE").groupby(key)[["flights", "delay", "delayed"]]
                   .rolling(f"{WINDOW_DAYS}D", closed="left").sum())
@@ -91,6 +109,7 @@ def main():
                            rates(window, key).reset_index(drop=True)], axis=1)
         table.to_parquet(f"{OUT_DIR}/{key}.parquet", index=False)
         print(f"{key}: {len(table):,} rows")
+    pd.concat(base).to_parquet(BASE_PATH, index=False)
 
 
 if __name__ == "__main__":
